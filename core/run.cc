@@ -42,7 +42,12 @@ void run(void)
 
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
 
+#ifndef GR_TEST_PARTICLE
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
+#endif
+#ifdef GENERAL_RELATIVITY
+        compute_initial_accelerations();
+#endif
 
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion */
     }
@@ -121,7 +126,9 @@ void run(void)
         determine_where_addthermalFB_events_occur(); // (same, but for simple thermal feedback models)
 #endif
 
+#ifndef GR_TEST_PARTICLE
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
+#endif
         
 #ifdef PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP // do merge/split routines every single timestep - need to do it here if we didn't do it during domain decomp on a coarse timestep
         if(!reconstructed_tree)
@@ -227,6 +234,10 @@ void set_non_standard_physics_for_current_time(void)
 #if defined(GALSF_SFR_IMF_SAMPLING_DISTRIBUTE_SF)
     update_stellarnumber_and_timedistribofstarformation();
 #endif
+
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC==2)
+    gr_update_binary_position();
+#endif
 }
 
 
@@ -302,6 +313,11 @@ void calculate_non_standard_physics(void)
 #ifdef COOLING	/* radiative cooling and chemistry  */
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
+#endif
+
+#if defined(GENERAL_RELATIVITY) && defined(GR_BETACOOLING)
+    implicit_cooling();
+    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for GR cooling
 #endif
 
 
@@ -637,7 +653,7 @@ void output_log_messages(void)
   long long tot_count_gas[TIMEBINS];
   long long tot_cumulative[TIMEBINS];
   int weight, corr_weight;
-  double sum, avg_CPU_TimeBin[TIMEBINS], frac_CPU_TimeBin[TIMEBINS];
+  double sum, avg_CPU_TimeBin[TIMEBINS], frac_CPU_TimeBin[TIMEBINS]={0.};
 
   sumup_large_ints(TIMEBINS, TimeBinCount, tot_count);
   sumup_large_ints(TIMEBINS, TimeBinCountGas, tot_count_gas);
@@ -679,14 +695,17 @@ void output_log_messages(void)
 	  if(All.CPU_TimeBinCountMeasurements[i]) {avg_CPU_TimeBin[i] = sum / All.CPU_TimeBinCountMeasurements[i];} else {avg_CPU_TimeBin[i] = 0;}
 	}
 
-      for(i = All.HighestOccupiedTimeBin, weight = 1, sum = 0; i >= 0 && tot_count[i] > 0; i--, weight *= 2)
+      for(i = All.HighestOccupiedTimeBin, weight = 1, sum = 0; i >= 0; i--, weight *= 2)
+	{
+	if(tot_count[i]>0) /* skip empty bins, but keep going to the lower ones (the old loop stopped at the first empty bin, leaving the lower ones unset) */
 	{
 	  if(weight > 1) {corr_weight = weight / 2;} else {corr_weight = weight;}
 	  frac_CPU_TimeBin[i] = corr_weight * avg_CPU_TimeBin[i];
 	  sum += frac_CPU_TimeBin[i];
 	}
+	}
 
-      for(i = All.HighestOccupiedTimeBin; i >= 0 && tot_count[i] > 0; i--) {if(sum) {frac_CPU_TimeBin[i] /= sum;}}
+      for(i = All.HighestOccupiedTimeBin; i >= 0; i--) {if(sum) {frac_CPU_TimeBin[i] /= sum;}}
 
 
         printf("Occupied timebins: non-cells     cells       dt                 cumulative A D    avg-time  cpu-frac\n");

@@ -13,6 +13,11 @@
  * This file was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
+#ifdef GENERAL_RELATIVITY
+#include "stellar_hardening.h"
+#include "PN_acceleration.h"
+#endif
+
 void add_analytic_gravitational_forces(void);
 void GravAccel_set_zeros_if_needed(void);
 void GravAccel_StaticPlummerSphere(void);
@@ -29,6 +34,7 @@ void GravAccel_RDITestProblem(void);
 void GravAccel_SpecialCustomNuclearZoomBoundaryConditions(void);
 void GravAccel_GMCTurbInit(void);
 void GravAccel_FilamentTurbInit(void);
+void GravAccel_BinaryOrbit(void);
 
 /* parent routine which decides which (if any) analytic gravitational forces are applied */
 void add_analytic_gravitational_forces()
@@ -46,6 +52,7 @@ void add_analytic_gravitational_forces()
     //GravAccel_GrowingDiskPotential();   // time-dependent (adiabatically growing) disk
     //GravAccel_StaticNFW();              // NFW profile sphere
     //GravAccel_PaczynskiWiita();         // Paczynski-Wiita pseudo-Newtonian potential
+    GravAccel_BinaryOrbit();              // GR binary black-hole metric (GR_METRIC==2): Newtonian(+PN) orbit of the two black holes [does nothing otherwise]
 #endif
 #ifdef STARFORGE_GMC_TURBINIT
     GravAccel_GMCTurbInit();              // uniform sphere harmonic potential + r^-3 halo outside to confine stirred turbulent gas
@@ -448,6 +455,84 @@ void GravAccel_PaczynskiWiita()
 
 
 
+void GravAccel_BinaryOrbit()
+{
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC==2) //Note: we approximate the gas+BH interaction as Newtonian (flat background coordinates)
+    int i,j,k;
+    double acc_sink[6]={0.};
+    double acc1[3]={0.0};
+    double acc2[3]={0.0};
+#ifdef GR_INCLUDE_STELLAR_HARDENING
+    if(ThisTask==0) {hardening_2B(grP[0].Pos,grP[1].Pos,grP[0].Vel,grP[1].Vel,grP[0].Mass,grP[1].Mass,acc_sink,acc_sink+3);} /* only one task, since acc_sink is summed over all tasks below */
+#endif
+    double dp[6],r2[2];
+    for(i=0;i<NumPart;i++)
+    {
+        if(P[i].Mass<=0) continue;
+#ifndef GR_INCLUDE_GAS_CONTRIBUTION
+        if(P[i].Type!=5) continue;
+#endif
+        if(P[i].Ti_current!=All.Ti_Current) drift_particle(i,All.Ti_Current);
+        for(k=0;k<3;k++) {dp[k]=P[i].Pos[k]-grP[0].Pos[k]; dp[k+3]=P[i].Pos[k]-grP[1].Pos[k];}
+#if defined(BOX_PERIODIC)
+        NEAREST_XYZ(dp[0],dp[1],dp[2],-1);
+        NEAREST_XYZ(dp[3],dp[4],dp[5],-1);
+#endif
+        r2[0] = dp[0]*dp[0]+dp[1]*dp[1]+dp[2]*dp[2], r2[1]=dp[3]*dp[3]+dp[4]*dp[4]+dp[5]*dp[5];
+        r2[0] = sqrt(r2[0]), r2[1]=sqrt(r2[1]);
+        for(k=0;k<3;k++)
+        {
+            if(r2[0]!=0) acc_sink[k] += P[i].Mass*dp[k] / (r2[0]*r2[0]*r2[0]);
+            if(r2[1]!=0) acc_sink[k+3] += P[i].Mass*dp[k+3] / (r2[1]*r2[1]*r2[1]);
+        }
+    }
+    // We here calculate the total accelerations
+    double acc_sink_tot[6]={0.0};
+    MPI_Allreduce(acc_sink,acc_sink_tot,6,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD);
+#ifdef GR_INCLUDE_PN_CORRECTIONS //first estimate of PN corrections
+    double deltat = -1;
+    for(j = FirstActiveParticle; j >= 0; j = NextActiveParticle[j]){
+        if(P[j].Type==5){
+            deltat = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(j);
+            deltat = deltat/2.;
+            break;
+        }
+    }
+    if(grP[0].Mass*grP[1].Mass>0){
+        PN_acceleration(grP[0].Pos,grP[1].Pos,grP[0].Vel,grP[1].Vel,grP[0].Mass,grP[1].Mass,acc1,acc2);
+        if(deltat >= 0.)
+        {
+            // Predictor using old total accelerations acc_sink_tot
+            for(k=0; k<3; ++k) { acc_sink_tot[k]+=acc1[k]; acc_sink_tot[k+3]+=acc2[k]; }
+            double vpred1[3]={grP[0].Vel[0],grP[0].Vel[1],grP[0].Vel[2]};
+            double vpred2[3]={grP[1].Vel[0],grP[1].Vel[1],grP[1].Vel[2]};
+            vpred1[0]+=All.G*acc_sink_tot[0]*deltat; vpred1[1]+=All.G*acc_sink_tot[1]*deltat; vpred1[2]+=All.G*acc_sink_tot[2]*deltat;
+            vpred2[0]+=All.G*acc_sink_tot[3]*deltat; vpred2[1]+=All.G*acc_sink_tot[4]*deltat; vpred2[2]+=All.G*acc_sink_tot[5]*deltat;
+            for(k=0; k<3; ++k) { acc_sink_tot[k]-=acc1[k]; acc_sink_tot[k+3]-=acc2[k]; }
+            // Corrector only for the PN contribution
+            PN_acceleration(grP[0].Pos,grP[1].Pos,vpred1,vpred2,grP[0].Mass,grP[1].Mass,acc1,acc2);
+            // Update after PN correction
+            for(k=0; k<3; ++k) { acc_sink_tot[k]+=acc1[k]; acc_sink_tot[k+3]+=acc2[k]; }
+        }
+    }
+#endif
+    // Assign total acceleration to P[i].GravAccel
+    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    {
+        if(P[i].Type!= 5) continue;
+        if(P[i].ID==grP[0].pID)
+        {
+            for(k=0;k<3;k++) {P[i].GravAccel[k] += acc_sink_tot[k]; }
+        }
+        else
+        {
+            for(k=0;k<3;k++) {P[i].GravAccel[k] += acc_sink_tot[k+3];}
+        }
+    }
+#endif //defined(GENERAL_RELATIVITY) && (GR_METRIC==2)
+}
+
+
 #ifdef PARTICLE_EXCISION
 void apply_excision(void)
 {
@@ -467,6 +552,39 @@ void apply_excision(void)
                 All.Mass_Accreted_By_SpecialParticle[j] += P[i].Mass;
                 P[i].Mass = 0;
             }
+        }
+    }
+#elif defined(GENERAL_RELATIVITY)
+    /* GR: remove the cells inside the excision radius around the black hole(s) [check_boundary, in gr/gr_utils.cc] */
+    int i,k; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    {
+        if(P[i].Type == 0)
+        {
+            double dp[3]; for(k=0;k<3;k++) {dp[k]=P[i].Pos[k];}
+#ifdef BOX_PERIODIC
+            dp[0] -= boxHalf_X;
+            dp[1] -= boxHalf_Y;
+            dp[2] -= boxHalf_Z;
+#endif
+            double r2 = dp[0]*dp[0]+dp[1]*dp[1]+dp[2]*dp[2], r = sqrt(r2);
+#if (GR_METRIC==2) /* problem-specific (circumbinary disc) excision, hard-coded as in the original GR code */
+            if(r>1500) {P[i].Mass=0;} //Spherical excision
+            r2 = dp[0]*dp[0]+dp[1]*dp[1]; //Occhio: raggio cilindrico
+            r = sqrt(r2);
+            double t0,tf,tcut;
+            t0 = 30000;
+            tf = 50000;
+            tcut = 39500;
+            if(All.Time < tcut)
+            {
+                double excision_radius_cavity=0,ex0;
+                ex0=100;
+                if(All.Time < t0) {excision_radius_cavity=ex0;}
+                else if(All.Time >= t0) {excision_radius_cavity=ex0*(-(All.Time-t0)/(tf-t0) + 1);}
+                if(r < excision_radius_cavity) {P[i].Mass = 0;}
+            }
+#endif
+            check_boundary(i);
         }
     }
 #else

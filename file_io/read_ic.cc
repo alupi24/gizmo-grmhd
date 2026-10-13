@@ -342,7 +342,7 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             {
                 for(k = 0; k < 3; k++) {CellP[offset + n].BPred[k] = *fp++;}
                 CellP[offset + n].divB = 0;
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
                 CellP[offset + n].Phi = 0;
                 CellP[offset + n].PhiPred = 0;
 #endif
@@ -686,6 +686,10 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_CHIMES_FLUX_G0:
         case IO_CHIMES_FLUX_ION:
         case IO_MACHNUM:
+#ifdef GENERAL_RELATIVITY
+        case IO_RHO0:
+        case IO_METRIC:
+#endif
             break;
 
         case IO_LASTENTRY:

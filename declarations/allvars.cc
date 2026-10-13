@@ -313,6 +313,10 @@ struct particle_data *P,	/*!< holds particle data on local processor */
 struct gas_cell_data *CellP,	/*!< holds gas cell data on local processor */
  *DomainGasBuf;			/*!< buffer for gas cell data in domain decomposition */
 
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC==2)
+struct gr_particle_data *grP;
+#endif
+
 peanokey *DomainKeyBuf;
 
 /* global state of system

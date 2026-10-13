@@ -903,6 +903,9 @@ void density(void)
                     set_mesh_motion(i); // use user-specified analytic function to define mesh motions //
 #elif ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
                     double eps_pvel = 0.3; // normalization for how much 'weight' to give to neighbors (unstable if >=0.5)
+#if defined(GENERAL_RELATIVITY) && defined(MAGNETIC)
+                    eps_pvel = 0.2;
+#endif
                     {int k; for(k=0;k<3;k++) {CellP[i].ParticleVel[k] = (1.-eps_pvel)*CellP[i].VelPred[k] + eps_pvel*CellP[i].ParticleVel[k]/CellP[i].Density;}} // assign mixture velocity
 #elif (HYDRO_FIX_MESH_MOTION==7)
                     {int k; for(k=0;k<3;k++) {CellP[i].ParticleVel[k] = CellP[i].VelPred[k];}} // move with fluid

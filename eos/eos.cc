@@ -60,6 +60,15 @@ void set_eos_pressure(int i)
     double soundspeed, press=0, gamma_eos_index = GAMMA(i); soundspeed=0; /* get effective adiabatic index */
     press = (gamma_eos_index-1) * CellP[i].InternalEnergyPred * Get_Gas_density_for_energy_i(i); /* ideal gas EOS (will get over-written it more complex EOS assumed) */
 
+#ifdef GENERAL_RELATIVITY //Call external routine in the gr subdirectory (for consistency with the Con2Prim routine)
+    press = gr_pressure_rho0_u(Get_Gas_density_for_energy_i(i),CellP[i].InternalEnergyPred);
+#ifdef EOS_GENERAL
+    CellP[i].SoundSpeed = sqrt(GAMMA(i) * press / (Get_Gas_density_for_energy_i(i) + GAMMA(i) * press / (GAMMA(i)-1)));
+#endif
+    CellP[i].Pressure = press;
+    return;
+#endif
+
 #if (defined(EOS_PRECOMPUTE) && defined(EOS_CARRIES_TEMPERATURE)) || defined(EOS_SUBSTELLAR_ISM) // will do temperature here
     double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, temp, mu_meanwt=1, rho=CellP[i].Density*All.cf_a3inv, u0=CellP[i].InternalEnergyPred;
     temp = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp); // get thermodynamic properties
@@ -237,6 +246,17 @@ double INLINE_FUNC Get_Gas_density_for_energy_i(int i)
 #ifdef HYDRO_PRESSURE_SPH
     return CellP[i].EgyWtDensity;
 #endif
+#ifdef GENERAL_RELATIVITY //This is the primitive density
+    int gr_limiter=0;
+    int k;
+    double dpl[3]; for(k=0;k<3;k++) {dpl[k]=P[i].Pos[k];}
+#if (GR_METRIC==2)
+    for(k=0;k<3;k++) {dpl[k] = -P[i].Min_xyz_to_Sink[k];}
+#endif
+    if(dpl[0]*dpl[0]+dpl[1]*dpl[1]+dpl[2]*dpl[2] <= pow(GAMMA_LIMITER_RADIUS,2)) gr_limiter=1;
+//    if(P[i].Pos[0]<LEFT_GAMMA_BOUNDARY||P[i].Pos[0]>RIGHT_GAMMA_BOUNDARY) gr_limiter=1;
+    return gr_get_primitive_density(CellP[i].Density,CellP[i].VelPred,&(CellP[i].gr), gr_limiter);
+#endif
     return CellP[i].Density;
 }
 
@@ -246,6 +266,8 @@ double INLINE_FUNC Get_Gas_effective_soundspeed_i(int i)
 {
 #ifdef EOS_GENERAL
     return CellP[i].SoundSpeed;
+#elif defined(GENERAL_RELATIVITY)
+    return sqrt(GAMMA(i) * CellP[i].Pressure / (Get_Gas_density_for_energy_i(i) + GAMMA(i) * CellP[i].Pressure / (GAMMA(i)-1)));
 #else
     /* if nothing above triggers, then we resort to good old-fashioned ideal gas */
     return sqrt(GAMMA(i) * CellP[i].Pressure / Get_Gas_density_for_energy_i(i));
@@ -256,7 +278,11 @@ double INLINE_FUNC Get_Gas_effective_soundspeed_i(int i)
 /* calculate the thermal sound speed (using just the InternalEnergy variable) in a given element */
 double INLINE_FUNC Get_Gas_thermal_soundspeed_i(int i)
 {
+#if defined(GENERAL_RELATIVITY)
+    return sqrt(GAMMA(i) * CellP[i].Pressure / (Get_Gas_density_for_energy_i(i) + GAMMA(i) * CellP[i].Pressure / (GAMMA(i)-1)));
+#else
     return sqrt(convert_internalenergy_soundspeed2(i,CellP[i].InternalEnergyPred));
+#endif
 }
 
 
@@ -277,6 +303,62 @@ double Get_Gas_Fast_MHD_wavespeed_i(int i)
     double cs = Get_Gas_thermal_soundspeed_i(i), vA = Get_Gas_Alfven_speed_i(i);
     return sqrt(cs*cs + vA*vA);    
 }
+
+#if defined(GENERAL_RELATIVITY) && defined(MAGNETIC)
+/* GR versions of the Alfven and fast-MHD wave speeds (C++ overloads of the Newtonian routines above, which are kept for the callers that only
+   need a Newtonian estimate). The Alfven speed is v_A = sqrt(b^2/(rho h + b^2)), with rho h = rho0 (1+u) + P */
+double Get_Gas_Alfven_speed_i(int i, double *vphys)
+{
+    double b2,bvec[4],Bprim[3];
+    int k;
+    for(k=0;k<3;k++) {Bprim[k]=CellP[i].BPred[k]*CellP[i].Density/CellP[i].gr.gdet/P[i].Mass;}
+    Vphys(vphys,CellP[i].gr.beta,CellP[i].gr.alpha);
+    b2=Get_Gas_BField_RestFrame(i,Bprim,vphys,bvec);
+    double hstar=Get_Gas_density_for_energy_i(i)*(1.+CellP[i].InternalEnergyPred) + CellP[i].Pressure + b2;
+    if(b2 > 0) {return sqrt(b2 / hstar);}
+    return 0;
+}
+
+double Get_Gas_Fast_MHD_wavespeed_i(int i, double *vphys, double Wfac, double vcoord_n, double beta_n, double gamma_uii)
+{
+    double cs = Get_Gas_thermal_soundspeed_i(i), vA = Get_Gas_Alfven_speed_i(i, vphys), vA2 = vA*vA;
+    double V2 = cs*cs*(1-vA2)+vA2;
+    double a = (V2-1)*(Wfac*Wfac) - V2;
+    double b = -2*(Wfac*Wfac*vcoord_n*(V2-1)+V2*beta_n);
+    double c = (Wfac*Wfac*vcoord_n*vcoord_n*(V2-1) + V2*(CellP[i].gr.alpha*gamma_uii - (beta_n*beta_n)));
+    long double disc = sqrtl(b*b - 4*a*c);
+    return (-b + disc)/(2*a); //SOLO QUELLA POSITIVA'?
+}
+
+/* returns b^2 = b^mu b_mu, the squared magnetic field in the fluid rest frame, and fills bvec with (b^0 [times alpha], b_i) */
+double Get_Gas_BField_RestFrame(int i_particle_id, double *B, double *vphys, double *bvec)
+{
+    double Btmp[3],Wl=0,bmag=0,tmpvec[3];
+    int k;
+    for(k=0;k<3;k++) {Btmp[k]=B[k];}
+    int gr_limiter=0;
+    double dpl[3]; for(k=0;k<3;k++) {dpl[k]=P[i_particle_id].Pos[k];}
+#if (GR_METRIC==2)
+    for(k=0;k<3;k++) {dpl[k] = -P[i_particle_id].Min_xyz_to_Sink[k];}
+#endif
+
+    if(dpl[0]*dpl[0]+dpl[1]*dpl[1]+dpl[2]*dpl[2] <= pow(GAMMA_LIMITER_RADIUS,2)) gr_limiter=1;
+//    if(P[i_particle_id].Pos[0]<LEFT_GAMMA_BOUNDARY||P[i_particle_id].Pos[0]>RIGHT_GAMMA_BOUNDARY) gr_limiter=1;
+    Wl=lorentz_factor(CellP[i_particle_id].gr.gamma,vphys, gr_limiter);
+    raise_lower_indices(CellP[i_particle_id].gr.gamma,vphys,tmpvec);
+    for(k=0;k<3;k++) {bmag += Btmp[k]*tmpvec[k];}
+    bvec[0] = Wl*bmag; ///CellP[i_particle_id].gr.alpha; //b0 always appears multiplied by alpha
+    tmpvec[0] = Btmp[0]/Wl + Wl*bmag*(vphys[0]-CellP[i_particle_id].gr.beta[0]/CellP[i_particle_id].gr.alpha);
+    tmpvec[1] = Btmp[1]/Wl + Wl*bmag*(vphys[1]-CellP[i_particle_id].gr.beta[1]/CellP[i_particle_id].gr.alpha);
+    tmpvec[2] = Btmp[2]/Wl + Wl*bmag*(vphys[2]-CellP[i_particle_id].gr.beta[2]/CellP[i_particle_id].gr.alpha);
+    //Now lower indices for j components
+    double beta_cov[3];
+    raise_lower_indices(CellP[i_particle_id].gr.gamma,CellP[i_particle_id].gr.beta,beta_cov);
+    raise_lower_indices(CellP[i_particle_id].gr.gamma,tmpvec,bvec+1);
+    for(k=1;k<4; k++) {bvec[k] += beta_cov[k-1]/CellP[i_particle_id].gr.alpha*bvec[0];}
+    return bmag*bmag + vector_sqnorm(CellP[i_particle_id].gr.gamma,Btmp)/Wl/Wl;
+}
+#endif
 
 
 /* calculate and return the actual B Field of a cell (in comoving units, so multiply by All.cf_a2inv to get physical) */

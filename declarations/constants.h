@@ -1,6 +1,6 @@
 /* values of various constants to be parsed as part of global definitions */
 
-#if (SLOPE_LIMITER_TOLERANCE > 0)
+#if (SLOPE_LIMITER_TOLERANCE > 0) && !defined(GENERAL_RELATIVITY)
 #define WAKEUP   4.1            /* allows 2 timestep bins within kernel */
 #else
 #define WAKEUP   2.1            /* allows only 1-separated timestep bins within kernel */

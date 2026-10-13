@@ -517,8 +517,18 @@ void init(void)
     All.PM_Ti_endstep = All.PM_Ti_begstep = 0;
 #endif
 
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC==2)
+    gr_update_binary_position();
+#endif
+
     for(i = 0; i < N_gas; i++)	/* initialize gas/fluid cell properties */
     {
+#ifdef GENERAL_RELATIVITY
+        set_metric_coefficients(P[i].Pos,P[i].Potential,&(CellP[i].gr));
+        for(j = 0; j < 3; j++) CellP[i].DtMomentum[j] = 0;
+        CellP[i].DtEnergy = 0;
+        CellP[i].DtVolume = 0;
+#endif
         CellP[i].InternalEnergyPred = CellP[i].InternalEnergy;
 
         for(j = 0; j < 3; j++)
@@ -702,8 +712,11 @@ void init(void)
 #if defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
         CellP[i].Balpha = 0.0;
 #endif
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
         CellP[i].Phi = CellP[i].PhiPred = CellP[i].DtPhi = 0;
+#ifdef DIVBCLEANING_GR
+        CellP[i].CleaningSpeed = 0; /* set from the local magnetosonic speed in the first hydro loop */
+#endif
 #endif
 #ifdef SINK_RETURN_BFLUX
         P[i].B[0] = P[i].B[1] = P[i].B[2] = 0;
@@ -823,14 +836,24 @@ void init(void)
 
 
     /* HELLO! This here is where you should insert custom code for hard-wiring the ICs of various test problems */
-
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC>0)
+    apply_excision();
+#endif
 
 
     density();
     for(i = 0; i < N_gas; i++)	/* initialize gas/fluid cell properties */
     {
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC<0) //The default code here corresponds to the initialisation of a TOV solution
+        double rho0=CellP[i].Density/CellP[i].gr.gdet;
+        if(RestartFlag==0) {CellP[i].InternalEnergy = rho0;}
+#endif
         int k=0;
         CellP[i].InternalEnergyPred = CellP[i].InternalEnergy;
+#if defined(GENERAL_RELATIVITY) && defined(GR_ENTROPY_SWITCH)
+        CellP[i].Entropy = get_pressure(i) / pow(gr_get_primitive_density(CellP[i].Density,CellP[i].VelPred,&(CellP[i].gr), 0),GAMMA(i));
+        CellP[i].EntropyPred = CellP[i].Entropy;
+#endif
         CellP[i].recent_refinement_flag = 0; // always initialize to zero, no recent refinements
 
         // re-match the predicted and initial velocities and B-field values, just to be sure //

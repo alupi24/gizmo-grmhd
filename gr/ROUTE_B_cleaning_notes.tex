@@ -1,0 +1,199 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage[hidelinks]{hyperref}
+\usepackage{microtype}
+\newcommand{\cB}{\mathcal{B}}
+\newcommand{\ph}{\hat\psi}
+\newcommand{\ch}{c_h}
+\newcommand{\pd}{\partial}
+\newcommand{\sg}{\sqrt{\gamma}}
+\newcommand{\code}[1]{\texttt{#1}}
+\title{Route B: hyperbolic divergence cleaning with a genuine cleaning speed $c_h$\\ in the GIZMO GRMHD module}
+\author{Derivation notes for review --- revision 2 (code changes implemented, see \S7)}
+\date{12 October 2026}
+
+\begin{document}
+\maketitle
+
+\section*{Conventions and notation}
+Conventions follow Fedrigo \& Lupi (2025, A\&A 700, A112; arXiv:2506.15775), hereafter FL25:
+signature $(-,+,+,+)$; $n^\mu=(1/\alpha,-\beta^i/\alpha)$, $n_\mu=(-\alpha,0,0,0)$;
+$\gamma^{\mu\nu}=g^{\mu\nu}+n^\mu n^\nu$ (so $\gamma^{0\mu}=0$);
+$\cB^i=\sg\,B^i$, $\tilde v^i=\alpha v^i-\beta^i$, $D=\sg\,\rho W$;
+$K_{ij}$ is the extrinsic curvature with $K_{ij}=-\alpha\,\Gamma^0_{ij}$ (as in \code{gr/metric.c}),
+$K=\gamma^{ij}K_{ij}$, so that $\nabla_\mu n^\mu=-K$; and
+$a^\mu=n^\nu\nabla_\nu n^\mu=D^\mu\ln\alpha$ is purely spatial ($a^0=0$, $a^i=\gamma^{ij}\pd_j\ln\alpha$).
+
+\textbf{Cleaning scalars.} $\psi$ is Dedner's scalar (the one obeying $\pd_t\psi=-\ch^2\nabla\!\cdot\!\bm B$ in flat space) and
+\begin{equation}
+\ph\equiv\psi/\ch
+\end{equation}
+is the Tricco--Price variable, which is also FL25's $\ph$ and the quantity stored by the code (\code{Phi}). Revision 1 of these notes used the hat for the field multiplying the cleaning tensor and then called $\psi/\ch$ ``$\Xi$''; that was a mislabelling and is corrected here. For $\ch=1$ the two scalars coincide.
+
+\section{The problem with eq.~(27) of FL25}
+FL25 introduce the cleaning field through
+\begin{equation}
+\nabla_\mu\!\left(F^{*\mu\nu}+g^{\mu\nu}\ph\right)=\sigma\,\ch\,\ph\,n^\nu .
+\tag{FL27}
+\end{equation}
+Because $g^{\mu\nu}$ is covariantly constant and Lorentz covariant, the $(B^\perp,\ph)$ subsystem obtained from (FL27) propagates at
+\begin{equation}
+\lambda_\pm=-\beta^\perp\pm\alpha\sqrt{\gamma^{\perp\perp}},
+\end{equation}
+the coordinate speed of light, for \emph{any} $\ch$. The cleaning speed survives only through $\ph=\psi/\ch$ and the damping term. The Riemann states of FL25 eq.~(32) are therefore light-speed states (this is what the live \code{DIVB\_VARYING\_CH} branch of \code{gr/gr\_mhd\_riemann\_solver.h} implements), while the time step and the damping in the code use $\ch=v_{\rm ms}(1+f)/(1+f v_{\rm ms}^2)<1$. Wherever $v_{\rm ms}\ll1$ the cleaning wave crosses more than one $h$ per step. To make $\ch$ a genuine propagation speed, the tensor multiplying the scalar must change.
+
+\section{Modified covariant equation}
+Replace $g^{\mu\nu}$ by
+\begin{equation}
+h^{\mu\nu}\equiv\gamma^{\mu\nu}-\ch^{-2}\,n^\mu n^\nu=g^{\mu\nu}+q\,n^\mu n^\nu,\qquad q\equiv 1-\ch^{-2},
+\label{eq:h}
+\end{equation}
+and write the cleaning system, with Dedner's $\psi$ next to the tensor, as
+\begin{equation}
+\boxed{\;\nabla_\mu\!\left(F^{*\mu\nu}+h^{\mu\nu}\psi\right)=\sigma\,\ph\,n^\nu=\frac{\sigma}{\ch}\,\psi\,n^\nu\;}
+\label{eq:cov}
+\end{equation}
+For $\ch=1$, $h=g$, $\psi=\ph$, and \eqref{eq:cov} is (FL27) including the damping. The right-hand side is normalised so that the damping rate is $\alpha\sigma\ch$ for every $\ch$ (\S\ref{sec:psi}); FL25's right-hand side, $\sigma\ch\ph n^\nu=\sigma\psi n^\nu$, would give a rate $\alpha\sigma\ch^3$ in the $h$-system.
+
+Components of $h$:
+\begin{equation}
+h^{00}=-\frac{\ch^{-2}}{\alpha^2},\qquad
+h^{0j}=\frac{\ch^{-2}\beta^j}{\alpha^2},\qquad
+h^{ij}=\gamma^{ij}-\frac{\ch^{-2}\beta^i\beta^j}{\alpha^2}.
+\end{equation}
+Divergence of $h$ (the new source):
+\begin{equation}
+\nabla_\mu h^{\mu\nu}=\nabla_\mu\!\left(q\,n^\mu n^\nu\right)
+= n^\nu\,(n^\mu\pd_\mu q)-q\,K\,n^\nu+q\,a^\nu .
+\label{eq:divh}
+\end{equation}
+
+\paragraph{Flat-space check.} With $\ch$ constant, $h=\mathrm{diag}(-\ch^{-2},1,1,1)$; the $\nu=j$ equations give $\pd_tB^j=-\pd_j\psi$ and the $\nu=0$ equation gives $\pd_t\psi=-\ch^2\,\pd_iB^i$: the standard Dedner system with characteristic speeds $\pm\ch$. This is what fixes the identification of the field next to $h^{\mu\nu}$ as Dedner's $\psi$.
+
+\section{3+1 reduction}
+Write $X=\nabla_\mu F^{*\mu0}$ and $Y^j=\nabla_\mu F^{*\mu j}$. From FL25 eq.~(29) one reads off
+\begin{equation}
+X=-\frac{\pd_i\cB^i}{\alpha\sg},\qquad
+\alpha\sg\,Y^j=\pd_t\cB^j+\pd_i\!\left(\tilde v^i\cB^j-\tilde v^j\cB^i\right).
+\end{equation}
+
+\subsection{$\nu=0$: the scalar equation}\label{sec:psi}
+Let $Z\equiv n^\mu\pd_\mu q-qK$. Eq.~\eqref{eq:cov} for $\nu=0$ reads
+\begin{equation}
+X-\frac{\ch^{-2}}{\alpha^2}\left(\pd_t-\beta^i\pd_i\right)\psi+\frac{\psi}{\alpha}Z=\frac{\sigma}{\ch}\frac{\psi}{\alpha}.
+\end{equation}
+Multiplying by $-\alpha^2\ch^2$ and using $\alpha\ch^2\,n^\mu\pd_\mu q=2(\pd_t-\beta^i\pd_i)\ln\ch$:
+\begin{equation}
+\left(\pd_t-\beta^i\pd_i\right)\psi=-\alpha\ch^2\frac{\pd_i\cB^i}{\sg}-\alpha\sigma\ch\,\psi
++\psi\Big[\,2\left(\pd_t-\beta^i\pd_i\right)\ln\ch-\alpha\left(\ch^2-1\right)K\,\Big].
+\label{eq:psi_cov}
+\end{equation}
+In terms of the stored variable $\ph=\psi/\ch$ (the change of variable removes one power of the $\ln\ch$ derivative):
+\begin{equation}
+\left(\pd_t-\beta^i\pd_i\right)\ph=-\alpha\ch\frac{\pd_i\cB^i}{\sg}-\alpha\sigma\ch\,\ph
+-\alpha\left(\ch^2-1\right)K\ph+\ph\left(\pd_t-\beta^i\pd_i\right)\ln\ch .
+\label{eq:psihat_cov}
+\end{equation}
+
+\paragraph{Fluid advection.} FL25 do not evolve the covariant scalar equation as such: their eqs.~(29)--(30) advect $\ph$ with the fluid, $(\pd_t+\tilde v^i\pd_i)\ph$, in mass-weighted form (GIZMO's ``mass-based $\phi$ flux''). The term $-\sg\,\beta^jv^i\pd_i\ph$ in their induction equation is the fingerprint of this choice: it appears only if $\pd_t\ph$ is eliminated with the fluid-advected equation; the pure covariant equation advects the scalar with $-\beta^i$ only. \emph{To be confirmed by the authors.} The same choice is kept here.
+
+\paragraph{Energy-consistent closure (recommended).} The last term of \eqref{eq:psihat_cov} is what the covariant $h$-system does with a time-dependent $\ch$: in the cleaning-energy budget (\S\ref{sec:energy}) it injects energy where $\ch$ decreases in time. A local $\ch$ (e.g.\ the maximum magnetosonic speed over the neighbours, re-evaluated every step) is time-dependent by construction and, being a max-filter, discontinuous in time, so the term cannot be neglected and its derivative is not even well defined. Tricco, Price \& Bate (2016) obtained their variable-$\ch$ scheme by requiring that the hyperbolic exchange conserve $\int[B^2/2+\ph^2/2]$ for arbitrary $\ch(\bm x,t)$; in the present language that amounts to dropping the $\ln\ch$-derivative term. Since $\psi$ has no physical content and \eqref{eq:cov} is only the device that fixes the characteristics, this is the form proposed for implementation:
+\begin{equation}
+\boxed{\;
+\pd_t(D\ph)+\pd_i\!\left(\tilde v^iD\ph\right)
+=-\alpha\ch D\frac{\pd_i\cB^i}{\sg}-\alpha\sigma\ch D\ph-\alpha\left(\ch^2-1\right)K D\ph\;}
+\label{eq:psihat}
+\end{equation}
+No derivative of $\ch$ appears, so $\ch$ may be local and re-evaluated every step. For $\ch=1$, \eqref{eq:psihat} is FL25 eq.~(30).
+
+\subsection{$\nu=j$: the induction equation}
+Eq.~\eqref{eq:cov} for $\nu=j$, with $n^j=-\beta^j/\alpha$:
+\begin{equation}
+Y^j+h^{0j}\pd_t\psi+h^{ij}\pd_i\psi+\psi\,n^jZ+q\,\psi\,a^j=\frac{\sigma}{\ch}\psi\,n^j .
+\end{equation}
+Eliminating $\pd_t\psi$ with the fluid-advected form of \eqref{eq:psi_cov},
+\begin{equation}
+\pd_t\psi=-\alpha v^i\pd_i\psi+\beta^i\pd_i\psi-\alpha\ch^2\frac{\pd_i\cB^i}{\sg}-\alpha\sigma\ch\psi+\alpha\ch^2\psi Z,
+\end{equation}
+one obtains
+\begin{align}
+h^{0j}\pd_t\psi&=-\frac{\ch^{-2}\beta^j}{\alpha}v^i\pd_i\psi+\frac{\ch^{-2}\beta^i\beta^j}{\alpha^2}\pd_i\psi
+-\frac{\beta^j\pd_i\cB^i}{\alpha\sg}-\frac{\beta^j}{\alpha}\frac{\sigma}{\ch}\psi+\frac{\beta^j}{\alpha}\psi Z,\\
+h^{ij}\pd_i\psi&=\gamma^{ij}\pd_i\psi-\frac{\ch^{-2}\beta^i\beta^j}{\alpha^2}\pd_i\psi .
+\end{align}
+The $\beta^i\beta^j$ terms cancel; $\psi n^jZ=-(\beta^j/\alpha)\psi Z$ cancels the $Z$ term; and the damping term cancels against the right-hand side, exactly as in the $\ch=1$ case. Multiplying what is left by $\alpha\sg$ and writing $\psi=\ch\ph$:
+\begin{equation}
+\boxed{\;
+\pd_t\cB^j+\pd_i\!\left(\tilde v^i\cB^j-\tilde v^j\cB^i\right)
+=-\sg\left(\ch^{-2}\beta^jv^i+\alpha\gamma^{ij}\right)\pd_i(\ch\ph)+\beta^j\pd_i\cB^i
+-\sg\left(1-\ch^{-2}\right)\ch\ph\,\gamma^{jk}\pd_k\alpha\;}
+\label{eq:ind}
+\end{equation}
+For $\ch=1$, \eqref{eq:ind} is FL25 eq.~(29). The only changes are the factor $\ch^{-2}$ on the $\beta^jv^i$ term and the lapse-gradient source. Two remarks:
+(i) $\pd_i(\ch\ph)$ needs no explicit $\nabla\ch$: in the code the gradient is assembled from face values of $\psi=\ch\ph$, exactly as the $\phi$ gradient is assembled today.
+(ii) If one re-did the elimination of $\pd_t\psi$ with the closure \eqref{eq:psihat} instead of \eqref{eq:psi_cov}, a term $\propto\beta^j\ph\,(\pd_t-\beta^i\pd_i)\ln\ch$ would be generated; it is dropped together with the other $\ch$-derivative terms, consistently with the closure (it is not a total divergence in the energy budget).
+
+\section{Riemann states for the $(\cB^\perp,\psi)$ subsystem}
+From \eqref{eq:psihat}--\eqref{eq:ind}, the subsystem along the face normal $\perp$ has fluxes
+$F_B=\alpha\sg\gamma^{\perp\perp}\psi$ and $F_\psi=\alpha\ch^2\cB^\perp/\sg$, hence characteristic speeds
+$\lambda=\pm\alpha\ch\sqrt{\gamma^{\perp\perp}}$ (plus the advection carried by the full system).
+Rusanov fluxes with $|\lambda|=\alpha\ch\sqrt{\gamma^{\perp\perp}}$ give, with $\psi_{L,R}=\ch^{L,R}\ph_{L,R}$ and $\ch$ at the face the larger of the two particle values (as in FL25),
+\begin{align}
+\bar\cB^\perp&=\tfrac12\left(\cB_L+\cB_R\right)-\tfrac12\sqrt{\gamma\gamma^{\perp\perp}}\;\frac{\psi_R-\psi_L}{\ch},
+\label{eq:faceB}\\
+\bar\psi&=\tfrac12\left(\psi_L+\psi_R\right)-\tfrac12\,\ch\left(\gamma\gamma^{\perp\perp}\right)^{-1/2}\left(\cB_R-\cB_L\right),
+\label{eq:facepsi}
+\end{align}
+which reduce to FL25 eq.~(32) for $\ch=1$. Note the powers: $1/\ch$ in \eqref{eq:faceB} and $\ch$ in \eqref{eq:facepsi}, \emph{not} $\ch^2$ as in the dead \code{\#ifndef DIVB\_VARYING\_CH} branch of the solvers.
+
+In terms of the primitive $B=\cB/\sg$ used inside the solver,
+$\bar B=\tfrac12(B_L+B_R)+\tfrac12\sqrt{\gamma^{\perp\perp}}\,(\psi_L-\psi_R)/\ch$, i.e.\ the present \code{corr\_p} with $\ph\to\ch\ph$ on each side and divided by the face $\ch$; the present \code{phi\_normal\_db} multiplied by the face $\ch$; and \code{phi\_normal\_mean} built from $\psi_{L,R}=\ch^{L,R}\ph_{L,R}$.
+
+\section{Energy and momentum}\label{sec:energy}
+Unchanged in form: with $\Xi^k$ the full right-hand side of \eqref{eq:ind} minus the ideal part, the sources of FL25 eq.~(34) (the chain rule $\pd\tau/\pd B^k\,\Xi^k$, $\pd S_j/\pd B^k\,\Xi^k$) keep the fluid primitives unaffected by the cleaning. $\tau$ is not conserved by the cleaning, now as before.
+
+Cleaning energy, flat space, hyperbolic part only, $E_\psi=\int\left[B^2/2+\ph^2/2\right]=\int\left[B^2/2+\psi^2/(2\ch^2)\right]$:
+with the covariant equation \eqref{eq:psihat_cov},
+\begin{equation}
+\frac{dE_\psi}{dt}=-\oint\psi\,\bm B\cdot d\bm A+\int\ph^2\,\pd_t\ln\ch
+\;-\;\int\alpha\sigma\ch\ph^2\ \ (\le0,\ \text{damping}),
+\end{equation}
+so a $\ch$ that varies in time injects energy where it decreases; with the closure \eqref{eq:psihat} the second term is absent and the exchange is conservative for arbitrary $\ch(\bm x,t)$, the damping monotonically dissipative. In the discrete scheme the exchange is only approximately antisymmetric when $\ch^L\neq\ch^R$, because the face $\bar\psi$ uses a pair value; this is the same approximation the Newtonian GIZMO cleaning makes. With $\ph$ as the stored variable, a jump of $\ch$ between two steps leaves $\ph^2/2$ unchanged; with $\psi$ stored it would not.
+
+\section{Choice of $\ch$}
+With the closure \eqref{eq:psihat} no smoothness of $\ch$ is required, so FL25's local choice (maximum over the interacting pair of $v_{\rm ms}(1+f)/(1+fv_{\rm ms}^2)$, re-evaluated every step) is admissible and keeps the time-step hierarchy. Two additions are suggested:
+(i) a floor $\ch\to1$ near the horizon, since the $K$ term of \eqref{eq:psihat}, $-\alpha(\ch^2-1)K\ph$, is a growth term for $\ch<1$ where $K>0$ (ingoing Kerr--Schild slicing), and the lapse-gradient term of \eqref{eq:ind} is largest there;
+(ii) the single function \code{gr\_cleaning\_speed()} used by the solver (face value), the scalar source, the damping and the Courant condition, so that all four see the same number.
+
+\section{Mapping to the code (implemented 12 Oct 2026, for review)}
+\begin{center}
+\small
+\begin{tabular}{>{\raggedright\arraybackslash}p{2.9cm} >{\raggedright\arraybackslash}p{5.8cm} >{\raggedright\arraybackslash}p{5.5cm}}
+\toprule
+Item & File & Change\\
+\midrule
+single definition of $\ch$ & \code{gr\_cleaning\_speed()} in \code{gr/gr.h} (implemented) & replaces the \code{VEL\_CLEANING} boost in \code{hydro/hydro\_evaluate.h:273-277}, \code{c\_h2} in \code{hydro/hydro\_toplevel.c:803-807}, damping in \code{predict.c:550-557}\\
+face states \eqref{eq:faceB}--\eqref{eq:facepsi} & \code{gr/gr\_mhd\_riemann\_solver.h}: HLL :118-131, GForce :433-446, HLLC :756-763 & $\psi_{L,R}=\ch^{L,R}\,$\code{phi}$_{L,R}$; \code{corr\_p /= c\_h}; \code{phi\_normal\_db *= c\_h}; delete the \code{ch2} logic; $\ch^{L,R}$ passed via \code{Riemann\_vec}\\
+$\ph$ source \eqref{eq:psihat} & \code{hydro/hydro\_toplevel.c:892-900} & \code{tmp\_ded*tmp\_ded} $\to$ \code{c\_h} (linear in $\ch$)\\
+$K$ term \eqref{eq:psihat} & \code{hydro/hydro\_toplevel.c}, cleaning block & \code{DtPhi -= alpha (c\_h\^{}2-1) K Phi}; $K$ from \code{get\_metric\_derivatives} (\code{gr/metric.c:365})\\
+$\beta^jv^i$ term \eqref{eq:ind} & \code{hydro/hydro\_toplevel.c:871-876} & multiply by $\ch^{-2}$\\
+lapse-gradient term \eqref{eq:ind} & \code{hydro/hydro\_toplevel.c}, cleaning block & \code{DtB[j] -= gdet (1-c\_h\^{}-2) c\_h Phi gamma\^{}jk dalpha\_k}, fed through \code{corr\_tau}/\code{corr\_S}\\
+damping & \code{predict.c:556} & rate $\alpha\sigma\ch$ with $\sigma=K/\Delta x$ (restores the $1/h$ of the dead branch)\\
+time step & \code{hydro/hydro\_evaluate.h}, \code{timestep.c} & \code{vsig = max(vsig\_fluid, 2 c\_h)}\\
+retire & \code{allvars.h:946}, \code{gr/gr.h:24-26} & \code{DIVB\_VARYING\_CH}, \code{VEL\_CLEANING\_MAX}; keep $f$\\
+\bottomrule
+\end{tabular}
+\end{center}
+Regression requirement: with $\ch=1$ everywhere all new terms vanish and the code must reproduce the current results to round-off.
+
+\section*{Points to confirm}
+\begin{enumerate}
+\item The $\beta^jv^i\pd_i\ph$ term in FL25 eq.~(29) arises only if $\pd_t\ph$ is eliminated using the fluid-advected scalar equation (eq.~30); the pure covariant eq.~(27) advects the scalar with $-\beta^i$ only. That choice is kept here.
+\item The damping normalisation: $\sigma\ph n^\nu$ on the right-hand side of \eqref{eq:cov} keeps the rate at $\alpha\sigma\ch$; FL25's $\sigma\ch\ph n^\nu$ would give $\alpha\sigma\ch^3$ in the $h$-system.
+\item The sign convention $K_{ij}=-\alpha\Gamma^0_{ij}$ in \code{gr/metric.c:365} is the one for which $\nabla_\mu n^\mu=-K$; with ingoing Kerr--Schild slicing $K>0$ near the horizon, which makes the $K$ term a growth term for $\ch<1$, hence the floor $\ch\to1$ there.
+\item The closure: all terms containing derivatives of $\ch$ are dropped, in both the scalar and the induction equation, in exchange for exact (continuum) energy consistency of the hyperbolic exchange for any $\ch(\bm x,t)$. For constant $\ch$ the closure and the covariant system coincide.
+\end{enumerate}
+\end{document}

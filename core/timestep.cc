@@ -44,7 +44,7 @@ void find_timesteps(void)
     if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin || dt_displacement == 0)
         find_dt_displacement_constraint(All.cf_hubble_a * All.cf_atime * All.cf_atime);
 
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
     /* need to calculate the global fastest wave speed to manage the damping terms stably */
     if((All.HighestActiveTimeBin == All.HighestOccupiedTimeBin)||(All.FastestWaveSpeed == 0))
     {
@@ -55,9 +55,13 @@ void find_timesteps(void)
         {
             if(P[i].Type==0)
             {
+#ifndef GENERAL_RELATIVITY
                 double vsig2 = 0.5  * fabs(CellP[i].MaxSignalVel); // in v_phys units //
                 double vsig1 = sqrt( Get_Gas_effective_soundspeed_i(i)*Get_Gas_effective_soundspeed_i(i) + fac_magnetic_pressure * (Get_Gas_BField(i,0)*Get_Gas_BField(i,0)+Get_Gas_BField(i,1)*Get_Gas_BField(i,1)+Get_Gas_BField(i,2)*Get_Gas_BField(i,2)) / CellP[i].Density );
                 double vsig0 = DMAX(vsig1,vsig2);
+#else
+                double vsig0 = 0.5 * fabs(CellP[i].MaxSignalVel);
+#endif
 
                 if(vsig0 > fastwavespeed) fastwavespeed = vsig0; // physical unit
                 double hsig0 = Get_Particle_Size(i) * All.cf_atime; // physical unit
@@ -106,6 +110,21 @@ void find_timesteps(void)
 #endif
 #endif
 
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC==2)
+    /* the two black holes of the binary metric share the same timestep, which is also not allowed to exceed (by more than a factor ~1.1) the smallest occupied gas timebin */
+    integertime ti_min_glob;
+    for(i = 0,ti_min = TIMEBASE;i<NumPart;i++)
+    {
+        if(P[i].Type!=5) continue;
+        ti_step=get_timestep(i, &aphys, 0);
+        if(ti_step < ti_min) {ti_min = ti_step;}
+    }
+    if(ti_min<TIMEBASE)
+      for(i = get_timestep_bin(ti_min)-1;i>=1;i--)
+       if(TimeBinCountGas[i]>0) {ti_min =GET_INTEGERTIME_FROM_TIMEBIN(i)*1.1;}
+    MPI_Allreduce(&ti_min, &ti_min_glob, 1, MPI_TYPE_TIME, MPI_MIN, MPI_COMM_WORLD);
+#endif
+
 
     /* Now assign new timesteps  */
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
@@ -114,6 +133,9 @@ void find_timesteps(void)
         ti_step = ti_min_glob;
 #else
         ti_step = get_timestep(i, &aphys, 0);
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC==2)
+        if(P[i].Type==5 && ti_step>ti_min_glob) ti_step=ti_min_glob;
+#endif
 #endif
         ti_step = (integertime)(((double)ti_step) / TIMESTEP_DILATION_FACTOR(i,0));
         
@@ -553,6 +575,36 @@ integertime get_timestep(int p,		/*!< particle index */
             if(P[p].ID == All.SpawnedWindCellID) {dt_courant *= 0.5;} // be more careful if this is a spawned-in gas cell
 #endif
             if(dt_courant < dt) dt = dt_courant;
+#ifdef GENERAL_RELATIVITY
+            //This is an additional check aimed to ensure that in the rare cases the energy flux is very large,
+            //the reduction in the total energy density does not result in a negative energy within the current timestep
+            {
+             double vphys[3]={P[p].Vel[0],P[p].Vel[1],P[p].Vel[2]};
+             Vphys(vphys,CellP[p].gr.beta,CellP[p].gr.alpha);
+             int gr_limiter=0;
+             double dpl[3]; for(k=0;k<3;k++) {dpl[k]=P[p].Pos[k];}
+#if (GR_METRIC==2)
+             for(k=0;k<3;k++) {dpl[k] = -P[p].Min_xyz_to_Sink[k];}
+#endif
+             if(dpl[0]*dpl[0]+dpl[1]*dpl[1]+dpl[2]*dpl[2] <= pow(GAMMA_LIMITER_RADIUS,2)) gr_limiter=1;
+             double rho=gr_get_primitive_density(CellP[p].Density,P[p].Vel,&(CellP[p].gr), gr_limiter);
+             double hstar=1.0 + CellP[p].InternalEnergy + CellP[p].Pressure/rho;
+             double Vi=P[p].Mass/CellP[p].Density;
+#ifdef MAGNETIC
+             double B[3];
+             double b[5];
+             for(k=0;k<3;k++) B[k] = CellP[p].B[k]/Vi/CellP[p].gr.gdet;
+             b[4] = Get_Gas_BField_RestFrame(p,B,vphys,b);
+             hstar += b[4]/rho;
+#endif
+             double Wl=lorentz_factor(CellP[p].gr.gamma,vphys, gr_limiter);
+             double tau=CellP[p].Density*hstar*Wl - CellP[p].gr.gdet*CellP[p].Pressure-CellP[p].Density;
+#ifdef MAGNETIC
+             tau += CellP[p].gr.gdet*(-0.5*b[4] - b[0]*b[0]);
+#endif
+             dt = DMIN(dt,0.1*tau/fabs(CellP[p].DtEnergy)*Vi);
+            }
+#endif
 
             double dt_prefac_diffusion;
             dt_prefac_diffusion = 0.5;

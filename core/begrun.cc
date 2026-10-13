@@ -82,6 +82,16 @@ void begrun(void)
 #endif // !(TURB_DIFF_METALS_LOWORDER)
 #endif // CHIMES_TURB_DIFF_IONS
 
+#ifdef GENERAL_RELATIVITY
+#ifdef HYDRO_SPH
+  if (ThisTask == 0)
+    {
+      printf("ERROR: GENERAL RELATIVITY does not currently work with SPH methods. Aborting.\n");
+      endrun(6574);
+    }
+#endif
+#endif
+
   read_parameter_file(ParameterFile);	/* ... read in parameters for this run */
 
   mymalloc_init();
@@ -216,6 +226,18 @@ void begrun(void)
 #if defined(CRFLUID_EVOLVE_SPECTRUM)
     CR_initialize_multibin_quantities(); // initialize the global variables and look-up tables //
 #endif
+
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC<0) //Loads the tabulated metric
+    load_metric();
+#endif
+
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC==2) && defined(GR_USECBWAVES) //Loads the tabulated orbital evolution
+    load_cbwaves();
+#endif
+
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC==2) && defined(GR_INCLUDE_STELLAR_HARDENING) //Initialises the tabulated hardening coefficients (Sesana, Haardt & Madau 2006)
+    hardening_params();
+#endif
     
   All.TimeLastRestartFile = CPUThisRun;
 
@@ -302,9 +324,11 @@ void begrun(void)
 #if defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
         All.ArtMagDispConst = all.ArtMagDispConst;
 #endif
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER)
         All.DivBcleanParabolicSigma = all.DivBcleanParabolicSigma;
         All.DivBcleanHyperbolicSigma = all.DivBcleanHyperbolicSigma;
+#endif
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
         All.FastestWaveSpeed = 0.0;
         All.FastestWaveDecay = 0.0;
 #endif
@@ -457,7 +481,11 @@ void begrun(void)
     int i;
     for(i = 0; i < NumPart; i++)
     {
+#ifdef GENERAL_RELATIVITY
+      P[i].Pos[2] = P[i].GravAccel[2] = 0; /* GR: the z-velocity is kept (as in the original GR code) */
+#else
       P[i].Pos[2] = P[i].Vel[2] = P[i].GravAccel[2] = 0;
+#endif
       if(P[i].Type == 0) {CellP[i].VelPred[2] = CellP[i].HydroAccel[2] = 0;}
     }
 #endif
@@ -2003,6 +2031,57 @@ void read_parameter_file(char *fname)
         id[nt++] = REAL;
 #endif
 
+#ifdef GENERAL_RELATIVITY
+#if (GR_METRIC==1)
+        strcpy(tag[nt], "GR_Mass");
+        addr[nt] = All.MetricParams;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "GR_Spin");
+        addr[nt] = All.MetricParams+1;
+        id[nt++] = REAL;
+#elif (GR_METRIC==2)
+        strcpy(tag[nt], "GR_BH1_SpinX");
+        addr[nt] = &All.MetricSpins[0];
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "GR_BH1_SpinY");
+        addr[nt] = &All.MetricSpins[1];
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "GR_BH1_SpinZ");
+        addr[nt] = &All.MetricSpins[2];
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "GR_BH2_SpinX");
+        addr[nt] = &All.MetricSpins[3];
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "GR_BH2_SpinY");
+        addr[nt] = &All.MetricSpins[4];
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "GR_BH2_SpinZ");
+        addr[nt] = &All.MetricSpins[5];
+        id[nt++] = REAL;
+#ifdef GR_INCLUDE_STELLAR_HARDENING
+        strcpy(tag[nt], "GR_StellarHardening_Rho");
+        addr[nt] = &All.rho_hard;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "GR_StellarHardening_Sigma");
+        addr[nt] = &All.sigma_hard;
+        id[nt++] = REAL;
+#endif
+#endif
+#endif
+
+#ifdef GEOMETRIC_REFINEMENT
+        strcpy(tag[nt],"MaxRefinementLevel");
+        addr[nt] = &All.MaxRefinementLevel;
+        id[nt++] = INT;
+#endif
+
 #ifdef TURB_DRIVING
 
 #if defined(TURB_DRIVING_SPECTRUMGRID)
@@ -2625,6 +2704,10 @@ void read_parameter_file(char *fname)
 
     All.CourantFac = 0.4;
     All.ErrTolIntAccuracy = 0.02;
+#ifdef GENERAL_RELATIVITY
+    All.CourantFac = 0.2;
+    All.ErrTolIntAccuracy = 0.01;
+#endif
     All.ErrTolTheta = 0.7;
     All.ErrTolForceAcc = 0.0025;
     All.MaxRMSDisplacementFac = 0.25;
@@ -2702,7 +2785,7 @@ void read_parameter_file(char *fname)
     if(All.MaxNumNgbDeviation > 0.05) {All.MaxNumNgbDeviation = 0.05;}
 #endif
     
-#if defined(MAGNETIC) || defined(HYDRO_MESHLESS_FINITE_VOLUME) || defined(SINK_WIND_SPAWN)
+#if defined(MAGNETIC) || defined(HYDRO_MESHLESS_FINITE_VOLUME) || defined(SINK_WIND_SPAWN) || defined(GENERAL_RELATIVITY)
     if(All.CourantFac > 0.2) {All.CourantFac = 0.2;}
     /* (PFH) safety factor needed for MHD calc, because people keep using the same CFac as hydro! */
 #endif
@@ -2800,6 +2883,16 @@ void read_parameter_file(char *fname)
     }
 #endif
 
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC==2) && !defined(GR_USECBWAVES)
+   if(sqrt(All.MetricSpins[0]*All.MetricSpins[0]+All.MetricSpins[1]*All.MetricSpins[1]+All.MetricSpins[2]*All.MetricSpins[2])>1.0)
+   {
+       if(ThisTask==0) {printf("First Black Hole's initial spin > 1\n");endrun(1);}
+   }
+   if(sqrt(All.MetricSpins[3]*All.MetricSpins[3]+All.MetricSpins[4]*All.MetricSpins[4]+All.MetricSpins[5]*All.MetricSpins[5])>1.0)
+   {
+       if(ThisTask==0) {printf("Second Black Hole's initial spin > 1\n");endrun(1);}
+   }
+#endif
 
     for(pnum = 0; All.NumFilesWrittenInParallel > (1 << pnum); pnum++);
 

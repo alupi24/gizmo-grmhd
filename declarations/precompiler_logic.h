@@ -64,6 +64,15 @@
 #define SINK_CALC_DISTANCES
 #endif
 
+#ifdef GENERAL_RELATIVITY
+#ifndef GR_METRIC
+#define GR_METRIC (1) //Default to Schwarzchild/Kerr
+#endif
+#if (GR_METRIC>0) && !defined(SINK_CALC_DISTANCES)
+#define SINK_CALC_DISTANCES
+#endif
+#endif
+
 #if defined(EOS_ELASTIC)
 #if !defined(DISABLE_SURFACE_VOLCORR) && !defined(HYDRO_KERNEL_SURFACE_VOLCORR)
 #define HYDRO_KERNEL_SURFACE_VOLCORR
@@ -958,10 +967,49 @@
 #endif
 
 #ifdef MAGNETIC /* recommended MHD switches -- only turn these off for de-bugging */
+#ifndef GENERAL_RELATIVITY
 #define DIVBCLEANING_DEDNER         /* hyperbolic/parabolic div-cleaing (Dedner 2002), with TP improvements */
+#else
+#define DIVBCLEANING_GR             /* GR hyperbolic/parabolic cleaning (Fedrigo & Lupi 2025) with a genuine cleaning speed c_h (Route B; DIVB_VARYING_CH retired) */
+#endif
 #ifdef HYDRO_SPH /* MHD switches specific to SPH MHD */
 #define SPH_TP12_ARTIFICIAL_RESISTIVITY   /* turns on magnetic dissipation ('artificial resistivity'): uses tricco switch =h*|gradB|/|B| */
 #endif
+#else
+/* the divergence-cleaning flags only make sense with MAGNETIC (they are set automatically above); if a Config lists one of them without
+   MAGNETIC, ignore it here, since several files test only the cleaning flags while the fields they need (All.FastestWaveSpeed, the phi
+   members of the gradient/Riemann structures, CellP.CleaningSpeed) are declared inside the MAGNETIC blocks */
+#ifdef DIVBCLEANING_GR
+#undef DIVBCLEANING_GR
+#endif
+#ifdef DIVBCLEANING_DEDNER
+#undef DIVBCLEANING_DEDNER
+#endif
+#endif
+
+#ifdef GENERAL_RELATIVITY
+#ifndef SELFGRAVITY_OFF //General relativity does not work with Newtonian gravity
+#define SELFGRAVITY_OFF
+#endif
+#if (GR_METRIC==1)
+#ifndef USE_BOYERLINDQUIST
+#define USE_KERRSCHILD_COORDINATES //Kerr-Schild coordinates as default for single black hole
+#endif
+#endif
+#if (GR_METRIC>0)
+#ifndef PARTICLE_EXCISION
+#define PARTICLE_EXCISION
+#endif
+#ifndef GR_EXCISION_RADIUS
+#define GR_EXCISION_RADIUS (2.1)
+#endif
+#endif
+#if (GR_METRIC==2)
+#ifndef GRAVITY_ANALYTIC
+#define GRAVITY_ANALYTIC
+#endif
+#endif
+#include "../gr/gr.h" /* must follow the definitions above (it declares functions only compiled with PARTICLE_EXCISION) */
 #endif
 
 #if defined(TURB_DIFF_ENERGY) || defined(TURB_DIFF_VELOCITY) || defined(TURB_DIFF_MASS) || defined(TURB_DIFF_METALS)

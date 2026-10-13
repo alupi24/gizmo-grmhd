@@ -16,6 +16,9 @@
     /* note the 'default' formulation from Lanson and Vila takes wt_i=V_i, wt_j=V_j; but this assumes negligible variation in h between particles;
      it is more accurate to use a centered wt (centered face area), which we get by linear interpolation, in extreme discontinuities of particle separation */
     if((fabs(V_i-V_j)/DMIN(V_i,V_j))/NUMDIMS > 1.25) {wt_i=wt_j=V_i*V_j*(kernel.wk_i+kernel.wk_j)/(V_i*kernel.wk_i+V_j*kernel.wk_j);} else {wt_i=V_i; wt_j=V_j;} //wt_i=wt_j = 2.*V_i*V_j / (V_i + V_j); // more conservatively, could use DMIN(V_i,V_j), but that is less accurate
+#ifdef GENERAL_RELATIVITY /* GR: face-area weights as in the original GR code (centered weights only for very large volume contrasts between elements not mutually inside each other's kernels) */
+    if( (fabs(V_i-V_j)/DMIN(V_i,V_j)/NUMDIMS > 5.5) && (kernel.r > local.KernelRadius || kernel.r > P[j].KernelRadius) ) {wt_i=wt_j=(V_i*Particle_Size_j+V_j*Particle_Size_i)/(Particle_Size_i+Particle_Size_j);} else {wt_i=V_i; wt_j=V_j;}
+#endif
     double facenormal_dot_dp = 0;
     for(k=0;k<3;k++)
     {

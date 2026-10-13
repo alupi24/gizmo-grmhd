@@ -304,6 +304,63 @@ HDF5INCL = -I$(HDF5_BASE)/include -DH5_USE_16_API
 HDF5LIB  = -L$(HDF5_BASE)/lib -Xlinker -R -Xlinker $(HDF5_BASE)/lib -lhdf5 -lz
 endif
 
+#----------------------------
+# CINECA Leonardo (GNU compilers + MPI; GSL_HOME and HDF5_HOME set by the loaded modules)
+ifeq ($(SYSTYPE),"Leonardo")
+CC       = mpicc
+#CC      = mpiicc
+CXX      = mpicxx
+#CXX     = mpiicpc
+FC       = mpifort
+#FC      = mpiifort
+OPTIMIZE = -O3 -march=native -funroll-loops
+#OPTIMIZE = -O3 -xhost -funroll-loops -no-prec-div -fp-model fast=2  # speed
+OPTIMIZE += -g -Wall # compiler warnings
+GMP_INCL = #
+GMP_LIBS = #
+GSL_INCL = -I$(GSL_HOME)/include
+GSL_LIBS = -L$(GSL_HOME)/lib
+MKL_INCL = #-I$(MKL_INC)
+MKL_LIBS = #-L$(MKL_LIB) -lmkl_intel_lp64 -lmkl_core -lmkl_sequential
+#FFTW_INCL= -I$(FFTW_HOME)/include
+#FFTW_LIBS= -L$(FFTW_HOME)/lib
+HDF5INCL = -I$(HDF5_HOME)/include -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_HOME)/lib -lhdf5 -lz
+OPT     += -DUSE_MPI_IN_PLACE
+endif
+
+#----------------------------
+# Supermario cluster (Intel compilers + MPI)
+ifeq ($(SYSTYPE),"Supermario")
+CC       =  mpiicc
+CXX      =  mpiicpc #c++
+FC       =  mpiifort #f90# -fbacktrace -g -ffpe-trap=zero,overflow,invalid -fbounds-check -ffree-line-length-none
+OPTIMIZE = -O3 -fp-model precise -Wuninitialized #-funroll-loops # speed
+OPTIMIZE += -g -Wall -no-multibyte-chars -pedantic # compiler warnings
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE +=  -fopenmp  # openmp required compiler flags
+endif
+GMP_INCL = #
+GMP_LIBS = #
+MKL_INCL =
+MKL_LIBS =
+GSL_INCL = -I$(GSL_HOME)/include
+GSL_LIBS = -L$(GSL_HOME)/lib
+FFTW_INCL= -I$(FFTW_HOME)/include
+FFTW_LIBS= -L$(FFTW_HOME)/lib
+HDF5INCL = -I$(HDF5_HOME)/include -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_HOME)/lib -lhdf5 -lz
+MPICHLIB =
+#OPT     += -DUSE_MPI_IN_PLACE
+KROME_OPTS = -g -Wall -ffpe-trap=invalid,overflow,underflow,denormal,zero
+## modules to load:
+## module load intel mvapich2 gsl hdf5 fftw2
+##  -- performance is very similar with impi (intel-mpi) instead of mpavich2,
+##   if preferred use that with MPICHLIB line uncommented
+## newest version of code needed for compatibility with calls in MPI-2 libraries
+##
+endif
+
 
 #----------------------------------------------------------------------------------------------
 #----------------------------------------------------------------------------------------------
@@ -400,6 +457,12 @@ MISC_OBJS = sidm/cbe_integrator.o \
 			sidm/dm_fuzzy.o \
 			sidm/sidm_core.o
 
+GR_OBJS =   gr/gr_utils.o \
+			gr/gr_kickdrift.o \
+			gr/gr_eos.o \
+			gr/metric.o \
+			gr/utoprim.o
+
 ## name of executable and optimizations
 EXEC   = GIZMO
 OPTIONS = $(OPTIMIZE) $(OPT)
@@ -407,7 +470,7 @@ OPTIONS = $(OPTIMIZE) $(OPT)
 ## combine all the objects above
 OBJS  = $(CORE_OBJS) $(SYSTEM_OBJS) $(GRAVITY_OBJS) $(HYDRO_OBJS) \
 		$(EOSCOOL_OBJS) $(STARFORM_OBJS) $(SINK_OBJS) $(RHD_OBJS) \
-		$(FOF_OBJS) $(MISC_OBJS)
+		$(FOF_OBJS) $(MISC_OBJS) $(GR_OBJS)
 
 ## fortran recompiler block
 FOPTIONS = $(OPTIMIZE) $(FOPT)
@@ -426,6 +489,7 @@ INCL    += 	declarations/allvars.h \
 			structure/fof.h \
 			structure/subfind/subfind.h \
 			cooling/cooling.h \
+			gr/gr.h \
 			Makefile
 
 

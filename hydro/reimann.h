@@ -44,6 +44,13 @@ struct Input_vec_Riemann
 {
     struct Conserved_var_Riemann L;
     struct Conserved_var_Riemann R;
+#ifdef GENERAL_RELATIVITY
+    struct gr_metric gr;            /*!< metric coefficients at the face */
+    double v_frame[3];              /*!< (physical) velocity of the face */
+#ifdef DIVBCLEANING_GR
+    double c_h;                     /*!< cleaning speed at the face (max over the pair), Route B */
+#endif
+#endif
 };
 struct Riemann_outputs
 {
@@ -53,7 +60,7 @@ struct Riemann_outputs
     MyDouble B_normal_corrected;
     MyDouble cfast_L;
     MyDouble cfast_R;
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
     MyDouble phi_normal_mean;
     MyDouble phi_normal_db;
 #endif
@@ -85,7 +92,7 @@ struct rotation_matrix
 /* --------------------------------------------------------------------------------- */
 static inline double actual_slopelimiter(double dQ_1, double dQ_2);
 static inline double get_dQ_from_slopelimiter(double dQ_1, MyFloat grad[3], struct kernel_hydra kernel, double rinv);
-void Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, double n_unit[3], double press_tot_limiter);
+void Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, double n_unit[3], double press_tot_limiter, int gr_limiter);
 double guess_for_pressure(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
                           double v_line_L, double v_line_R, double cs_L, double cs_R);
 void sample_reimann_standard(double S, struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
@@ -118,6 +125,14 @@ void reconstruct_face_states(double Q_i, MyFloat Grad_Q_i[3], double Q_j, MyFloa
 void HLLD_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, double press_tot_limiter);
 void rotate_states_to_face(struct Input_vec_Riemann *Riemann_vec, double n_unit[3], struct rotation_matrix *rot_matrix);
 void rotate_fluxes_back_to_lab(struct Riemann_outputs *Riemann_out, struct rotation_matrix rot_matrix);
+#endif
+
+#ifdef GENERAL_RELATIVITY
+#ifdef MAGNETIC
+#include "../gr/gr_mhd_riemann_solver.h"
+#else
+#include "../gr/gr_riemann_solver.h"
+#endif
 #endif
 
 
@@ -171,7 +186,7 @@ void reconstruct_face_states(double Q_i, MyFloat Grad_Q_i[3], double Q_j, MyFloa
 #else
     double fac_minmax = 0.5; /* 0.5, 0.1 works; 1.0 unstable; 0.75 is stable but begins to 'creep' */
     double fac_meddev = 0.375; /* 0.25,0.375 work well; 0.5 unstable; 0.44 is on-edge */
-#if (SLOPE_LIMITER_TOLERANCE == 2)
+#if (SLOPE_LIMITER_TOLERANCE == 2) && !defined(GENERAL_RELATIVITY) //With GR, we do not allow for too aggressive slope limiters
     fac_minmax=0.75;
     fac_meddev=0.40;
 #endif
@@ -283,7 +298,7 @@ static inline double get_dQ_from_slopelimiter(double dQ_1, MyFloat grad[3], stru
 /* Top-level Riemann solver routine: call this, it will call sub-routines */
 /*  (written by P. Hopkins, this is just a wrapper though for the various sub-routines) */
 /* --------------------------------------------------------------------------------- */
-void Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, double n_unit[3], double press_tot_limiter)
+void Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, double n_unit[3], double press_tot_limiter, int gr_limiter)
 {
     if((Riemann_vec.L.p < 0 && Riemann_vec.R.p < 0)||(Riemann_vec.L.rho < 0)||(Riemann_vec.R.rho < 0))
     {
@@ -311,15 +326,20 @@ void Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs
         Riemann_vec.R.rho *= All.cf_a3inv;
         Riemann_vec.L.p *= All.cf_a3inv;
         Riemann_vec.R.p *= All.cf_a3inv;
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
         Riemann_vec.L.phi *= All.cf_a3inv;
         Riemann_vec.R.phi *= All.cf_a3inv;
 #endif
     }
 #ifndef EOS_GENERAL
     /* here we haven't reconstructed the sound speeds and internal energies explicitly, so need to do it from pressure, density */
+#ifdef GENERAL_RELATIVITY
+    Riemann_vec.L.cs = sqrt(GAMMA_G0 * Riemann_vec.L.p / (Riemann_vec.L.rho + GAMMA_G0*Riemann_vec.L.p/ GAMMA_G9));
+    Riemann_vec.R.cs = sqrt(GAMMA_G0 * Riemann_vec.R.p / (Riemann_vec.R.rho + GAMMA_G0*Riemann_vec.R.p/ GAMMA_G9));
+#else
     Riemann_vec.L.cs = sqrt(GAMMA_G0 * Riemann_vec.L.p / Riemann_vec.L.rho);
     Riemann_vec.R.cs = sqrt(GAMMA_G0 * Riemann_vec.R.p / Riemann_vec.R.rho);
+#endif
     Riemann_vec.L.u  = Riemann_vec.L.p / (GAMMA_G9 * Riemann_vec.L.rho);
     Riemann_vec.R.u  = Riemann_vec.R.p / (GAMMA_G9 * Riemann_vec.R.rho);
 #endif
@@ -328,13 +348,27 @@ void Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs
     struct rotation_matrix rot_matrix;
     /* rotate the state to the face, so we can use the 1D riemann solver */
     rotate_states_to_face(&Riemann_vec, n_unit, &rot_matrix);
+#ifdef GENERAL_RELATIVITY
+    /* send it to the 1D GRMHD solver chosen with GENERAL_RELATIVITY=0/1/2 (HLL/GForce/HLLC) */
+#if (GENERAL_RELATIVITY==0)
+    GR_MHD_Riemann_solver(Riemann_vec, Riemann_out, gr_limiter); //HLL
+#elif (GENERAL_RELATIVITY==1)
+    GR_MHD_Riemann_solver_GForce(Riemann_vec,Riemann_out, gr_limiter); //GFORCE
+#else
+    GR_MHD_Riemann_solver_HLLC(Riemann_vec, Riemann_out, gr_limiter); //HLLC
+#endif
+#else
     /* send it to our 1D MHD solver, which will try several solutions until it gets a positive pressure */
     HLLD_Riemann_solver(Riemann_vec, Riemann_out, press_tot_limiter);
+#endif
     /* rotate the returned fluxes back to the lab frame */
     rotate_fluxes_back_to_lab(Riemann_out, rot_matrix);
 
 #else
     
+#ifdef GENERAL_RELATIVITY
+    GR_Riemann_solver(Riemann_vec, Riemann_out, n_unit, gr_limiter);
+#else
     double cs_L = Riemann_vec.L.cs;
     double cs_R = Riemann_vec.R.cs;
     double h_L = Riemann_vec.L.p/Riemann_vec.L.rho + Riemann_vec.L.u + 0.5*(Riemann_vec.L.v[0]*Riemann_vec.L.v[0]+Riemann_vec.L.v[1]*Riemann_vec.L.v[1]+Riemann_vec.L.v[2]*Riemann_vec.L.v[2]);
@@ -366,6 +400,7 @@ void Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs
     }
 #endif // cooling/galsf
 #endif // eos_general
+#endif // GENERAL_RELATIVITY
 #endif // magnetic
 
 #ifdef TURB_DIFF_METALS
@@ -1688,6 +1723,31 @@ void rotate_states_to_face(struct Input_vec_Riemann *Riemann_vec, double n_unit[
     Riemann_vec->R.B[0] = v[0]*rot_matrix->n[0] + v[1]*rot_matrix->n[1] + v[2]*rot_matrix->n[2];
     Riemann_vec->R.B[1] = v[0]*rot_matrix->m[0] + v[1]*rot_matrix->m[1] + v[2]*rot_matrix->m[2];
     Riemann_vec->R.B[2] = v[0]*rot_matrix->p[0] + v[1]*rot_matrix->p[1] + v[2]*rot_matrix->p[2];
+#endif
+#ifdef GENERAL_RELATIVITY //We need to rotate the frame velocity, the shift vector and the metric tensor
+    for(k=0;k<3;k++) {v[k]=Riemann_vec->v_frame[k];}
+    Riemann_vec->v_frame[0] = v[0]*rot_matrix->n[0] + v[1]*rot_matrix->n[1] + v[2]*rot_matrix->n[2];
+    Riemann_vec->v_frame[1] = v[0]*rot_matrix->m[0] + v[1]*rot_matrix->m[1] + v[2]*rot_matrix->m[2];
+    Riemann_vec->v_frame[2] = v[0]*rot_matrix->p[0] + v[1]*rot_matrix->p[1] + v[2]*rot_matrix->p[2];
+
+    for(k=0;k<3;k++) {v[k]=Riemann_vec->gr.beta[k];}
+    Riemann_vec->gr.beta[0] = v[0]*rot_matrix->n[0] + v[1]*rot_matrix->n[1] + v[2]*rot_matrix->n[2];
+    Riemann_vec->gr.beta[1] = v[0]*rot_matrix->m[0] + v[1]*rot_matrix->m[1] + v[2]*rot_matrix->m[2];
+    Riemann_vec->gr.beta[2] = v[0]*rot_matrix->p[0] + v[1]*rot_matrix->p[1] + v[2]*rot_matrix->p[2];
+
+    double nxy=sqrt(n_unit[0]*n_unit[0]+n_unit[1]*n_unit[1]); //sin theta
+    double grot[6],ugrot[6];
+    if(nxy>0)
+    {
+          rotate_tensor(Riemann_vec->gr.ugamma,n_unit[0]/nxy,-n_unit[1]/nxy,nxy,-n_unit[2],ugrot);
+          rotate_tensor(Riemann_vec->gr.gamma ,n_unit[0]/nxy,-n_unit[1]/nxy,nxy,-n_unit[2],grot );
+    }
+    else
+    {
+          rotate_tensor(Riemann_vec->gr.ugamma,1.,0.,nxy,-n_unit[2],ugrot);
+          rotate_tensor(Riemann_vec->gr.gamma ,1.,0.,nxy,-n_unit[2],grot );
+    }
+    for(k=0;k<6;k++) {Riemann_vec->gr.ugamma[k] = ugrot[k]; Riemann_vec->gr.gamma[k] = grot[k];}
 #endif
 }
 void rotate_fluxes_back_to_lab(struct Riemann_outputs *Riemann_out, struct rotation_matrix rot_matrix)

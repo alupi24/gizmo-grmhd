@@ -261,6 +261,10 @@ void restart(int modus)
 #endif
 	    }
 
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC==2)
+	  byten(&grP[0],2*sizeof(struct gr_particle_data),modus);
+#endif
+
 	  /* write state of random number generator */
 	  byten(gsl_rng_state(random_generator), gsl_rng_size(random_generator), modus);
 	  byten(&SelRnd, sizeof(SelRnd), modus);

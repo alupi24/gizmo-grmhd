@@ -18,6 +18,20 @@ extern struct gas_cell_data
     
     MyDouble VelPred[3];            /*!< predicted gas cell velocity at the current time */
     MyDouble HydroAccel[3];         /*!< acceleration due to hydrodynamical force (for drifting) */
+
+#ifdef GENERAL_RELATIVITY
+    MyDouble DtVolume;              /*!< rate of change in volume from hydro step*/
+    struct gr_metric gr;            /*!< metric coefficients at the cell position */
+    MyDouble DtEnergy;              /*!< rate of change in total energy from hydro step */
+    MyDouble DtMomentum[3];         /*!< rate of change in momentum from hydro step (conserved variable) */
+#ifdef GR_ENTROPY_SWITCH
+    MyDouble Entropy;               /*!< Entropy function P/rho^Gamma used to constrain the energy density evolution for adiabatic/isentopic fluxes*/
+    MyDouble EntropyPred;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+    MyDouble DtEntropy;             /*!< Rate of change of Entropy. This term is only present if the mass flux is non-zero*/
+#endif
+#endif
+#endif
     
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
     MyDouble Density_ExplicitInt;   /*!< explicitly integrated volume/density variable to be used if integrating the SPH-like form of the continuity directly */
@@ -58,11 +72,15 @@ extern struct gas_cell_data
     MyDouble B[3];                  /*!< actual B (conserved variable used for integration; can be B*V for flux schemes) */
     MyDouble DtB[3];                /*!< time derivative of B-field (of -conserved- B-field) */
     MyFloat divB;                   /*!< storage for the 'effective' divB used in div-cleaning procedure */
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
     MyDouble DtB_PhiCorr[3];        /*!< correction forces for mid-face update to phi-field */
     MyDouble PhiPred;               /*!< current value of Phi */
     MyDouble Phi;                   /*!< scalar field for Dedner divergence cleaning */
     MyDouble DtPhi;                 /*!< time derivative of Phi-field */
+#ifdef DIVBCLEANING_GR
+    MyDouble MeanPhi_PhiCorr[3];    /*!< face-area-weighted mean phi at the faces, used for the GR cleaning source terms */
+    MyFloat CleaningSpeed;          /*!< local cleaning speed c_h of this particle (boosted magnetosonic speed, set in the hydro loop; Route B) */
+#endif
 #endif
 #ifdef MHD_CONSTRAINED_GRADIENT
     int FlagForConstrainedGradients;/*!< flag indicating whether the B-field gradient is a 'standard' one or the constrained-divB version */
@@ -117,9 +135,12 @@ extern struct gas_cell_data
         MyDouble Density[3];
         MyDouble Pressure[3];
         MyDouble Velocity[3][3];
+#ifdef GENERAL_RELATIVITY
+        MyDouble RestMassDensity[3];
+#endif
 #ifdef MAGNETIC
         MyDouble B[3][3];
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
         MyDouble Phi[3];
 #endif
 #endif

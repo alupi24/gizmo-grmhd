@@ -79,7 +79,11 @@ int does_particle_need_to_be_merged(int i)
     }
 #endif
     if((P[i].Type>0) && (P[i].Mass > 0.5*All.MinMassForParticleMerger*target_mass_renormalization_factor_for_mergesplit(i,0))) {return 0;}
+#ifndef GEOMETRIC_REFINEMENT
     if(P[i].Mass <= (All.MinMassForParticleMerger*target_mass_renormalization_factor_for_mergesplit(i,0))) {return 1;}
+#else
+    if(P[i].Mass <= (3.0*All.MinMassForParticleMerger*target_mass_renormalization_factor_for_mergesplit(i,0))) {return 1;}
+#endif
     return 0;
 #endif
 }
@@ -118,6 +122,32 @@ double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
     double ref_factor=1.0;
 #if defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL)
     ref_factor = 1; // need to determine appropriate desired refinement criterion, if resolution is not strictly pre-defined //
+#endif
+
+#ifdef GEOMETRIC_REFINEMENT /* hyper-Lagrangian refinement in cylindrical radius: parameters are hard-coded here (Rref, radmin) and through MaxRefinementLevel */
+    if(P[i].Type==0)
+    {
+        double ref_factor_min=pow(0.5,All.MaxRefinementLevel+1);
+        //double Rref = 400, radmin=75;
+        //double Rref = 600, radmin=250;
+        double Rref = 600, radmin=300;
+#ifdef BOX_PERIODIC
+        double dp[3] = {P[i].Pos[0]-boxHalf_X,P[i].Pos[1]-boxHalf_Y,P[i].Pos[2]-boxHalf_Z};
+        double rad = sqrt(dp[0]*dp[0] + dp[1]*dp[1]);
+#else
+        double rad = sqrt(P[i].Pos[0]*P[i].Pos[0]+P[i].Pos[1]*P[i].Pos[1]);
+#endif
+        double xi_min=radmin/Rref;
+        double xi=rad/Rref;
+        double A = (1-ref_factor_min)/(1-xi_min)/(1-xi_min);
+        double B = -2*A*xi_min;
+        double C = 1-A*(1-2*xi_min);
+        if(rad<radmin) ref_factor=ref_factor_min; else if(rad<=Rref) { ref_factor = A*xi*xi+B*xi+C;   }
+
+        double ref_factor_lim = DMAX(ref_factor_min,pow(0.5,All.MaxRefinementLevel*All.Time/1280+1));
+        ref_factor=DMAX(ref_factor,ref_factor_lim);
+        ref_factor /= 1.5;
+    }
 #endif
     
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
@@ -543,7 +573,7 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
             //CellP[j].BPred[k] = CellP[j].B[k]; CellP[i].BPred[k] = CellP[i].B[k]; CellP[j].DtB[k] = CellP[i].DtB[k] = 0; /* set BPred equal to the conserved B, and zero the time derivatives and cleaning terms: these will be re-calculated self-consistently from the new mesh configuration */
         }
         CellP[j].divB = mass_of_new_particle * CellP[i].divB; CellP[i].divB -= CellP[j].divB; //CellP[i].divB = CellP[j].divB = 0; /* this will be self-consistently recomputed on the next timestep */
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
         CellP[j].Phi = mass_of_new_particle * CellP[i].Phi; CellP[i].Phi -= CellP[j].Phi; CellP[j].DtPhi = mass_of_new_particle * CellP[i].DtPhi; CellP[i].DtPhi -= CellP[j].DtPhi; CellP[j].PhiPred = mass_of_new_particle * CellP[i].PhiPred; CellP[i].PhiPred -= CellP[j].PhiPred; /* same partition as above */
         for(k=0;k<3;k++) {CellP[j].DtB_PhiCorr[k] = mass_of_new_particle * CellP[i].DtB_PhiCorr[k]; CellP[i].DtB_PhiCorr[k] -= CellP[j].DtB_PhiCorr[k];} /* same partition as above */
         //CellP[i].Phi = CellP[i].PhiPred = CellP[i].DtPhi = CellP[j].Phi = CellP[j].PhiPred = CellP[j].DtPhi = 0; for(k=0;k<3;k++) {CellP[i].DtB_PhiCorr[k] = CellP[j].DtB_PhiCorr[k] = 0;} /* zero the time derivatives and cleaning terms: these will be re-calculated self-consistently from the new mesh configuration */
@@ -591,6 +621,15 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
         }
         CellP[j].MassTrue = mass_of_new_particle * CellP[i].MassTrue;
         CellP[i].MassTrue -= CellP[j].MassTrue;
+#endif
+#ifdef GENERAL_RELATIVITY
+        for(k=0;k<3;k++)
+        {
+            CellP[j].DtMomentum[k] = mass_of_new_particle * CellP[i].DtMomentum[k];
+            CellP[i].DtMomentum[k] -= CellP[j].DtMomentum[k];
+        }
+        CellP[j].DtEnergy = mass_of_new_particle * CellP[i].DtEnergy;
+        CellP[i].DtEnergy -= CellP[j].DtEnergy;
 #endif
 #ifdef COSMIC_RAY_FLUID
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)
@@ -685,6 +724,13 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
      but it is important that the periodicity of the box be accounted for in relative positions and that we correct for this before allowing
      any other operations on the particles */
     P[i].Pos[0] += dx; P[j].Pos[0] -= dx; P[i].Pos[1] += dy; P[j].Pos[1] -= dy; P[i].Pos[2] += dz; P[j].Pos[2] -= dz;
+#ifdef GENERAL_RELATIVITY
+    if(P[i].Type==0)
+    {
+        set_metric_coefficients(P[i].Pos,P[i].Potential,&(CellP[i].gr));
+        set_metric_coefficients(P[j].Pos,P[j].Potential,&(CellP[j].gr));
+    }
+#endif
 
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
     P[i].Time_Of_Last_MergeSplit = All.Time; P[j].Time_Of_Last_MergeSplit = All.Time;
@@ -824,6 +870,111 @@ int merge_particles_ij(int i, int j)
     dm_i += CellP[i].DtMass;
     dm_j += CellP[j].DtMass;
 #endif
+#ifdef GENERAL_RELATIVITY
+    //First update conserved variable update
+    for(k=0;k<3;k++) CellP[j].DtMomentum[k] += CellP[i].DtMomentum[k];
+    for(k=0;k<3;k++) CellP[i].DtMomentum[k] = 0;
+    CellP[j].DtEnergy += CellP[i].DtEnergy;
+    CellP[i].DtEnergy = 0;
+
+    //Now merge conserved properties (to update primitives)
+    struct gr_primitives prims_ij;
+    struct gr_conservatives cons_i,cons_j,cons_j_pred;
+    double Si_check, Sj_check, ui_tmp, uj_tmp;
+    double Wlorentz;
+    int gr_limiter_i=0;
+    double dpl[3]; for(k=0;k<3;k++) {dpl[k]=P[i].Pos[k];}
+#if (GR_METRIC==2)
+    for(k=0;k<3;k++) {dpl[k] = -P[i].Min_xyz_to_Sink[k];}
+#endif
+    if(dpl[0]*dpl[0]+dpl[1]*dpl[1]+dpl[2]*dpl[2] <= pow(GAMMA_LIMITER_RADIUS,2)) gr_limiter_i=1;
+    int gr_limiter_j=0;
+    for(k=0;k<3;k++) {dpl[k]=P[j].Pos[k];}
+#if (GR_METRIC==2)
+    for(k=0;k<3;k++) {dpl[k] = -P[j].Min_xyz_to_Sink[k];}
+#endif
+    if(dpl[0]*dpl[0]+dpl[1]*dpl[1]+dpl[2]*dpl[2] <= pow(GAMMA_LIMITER_RADIUS,2)) gr_limiter_j=1;
+
+    /* --- Update predicted quantities --- */
+    //i-th particle
+    double Vi = P[i].Mass/CellP[i].Density;
+    for(k=0;k<3;k++) prims_ij.v[k]=CellP[i].VelPred[k];
+    Vphys(prims_ij.v,CellP[i].gr.beta,CellP[i].gr.alpha);
+    Wlorentz=lorentz_factor(CellP[i].gr.gamma,prims_ij.v, gr_limiter_i);
+    prims_ij.rho0=P[i].Mass/Wlorentz/CellP[i].gr.gdet/Vi;
+    prims_ij.u=CellP[i].InternalEnergyPred;
+    prims_ij.p=gr_pressure_rho0_u(prims_ij.rho0,prims_ij.u);
+#ifdef MAGNETIC
+    for(k=0;k<3;k++) prims_ij.B[k]=CellP[i].BPred[k]/Vi/CellP[i].gr.gdet;
+    prims_ij.bsq=Get_Gas_BField_RestFrame(i,prims_ij.B, prims_ij.v,prims_ij.b);
+#endif
+    gr_get_conservative_variables(&prims_ij,&cons_i,Wlorentz,CellP[i].gr.gamma,CellP[i].gr.gdet);
+
+    Si_check = log(prims_ij.u) + (1.0-GAMMA_DEFAULT)*log(prims_ij.rho0);
+    ui_tmp = prims_ij.u;
+
+    //j-th particle
+    double Vj = P[j].Mass/CellP[j].Density;
+    double Vtot = DMAX(Vi,Vj);
+    for(k=0;k<3;k++) prims_ij.v[k]=CellP[j].VelPred[k];
+    Vphys(prims_ij.v,CellP[j].gr.beta,CellP[j].gr.alpha);
+    Wlorentz=lorentz_factor(CellP[j].gr.gamma,prims_ij.v, gr_limiter_j);
+    prims_ij.rho0=P[j].Mass/Wlorentz/CellP[j].gr.gdet/Vj;
+    prims_ij.u=CellP[j].InternalEnergyPred;
+    prims_ij.p=gr_pressure_rho0_u(prims_ij.rho0,prims_ij.u);
+#ifdef MAGNETIC
+    for(k=0;k<3;k++) prims_ij.B[k]=CellP[j].BPred[k]/Vj/CellP[j].gr.gdet;
+    prims_ij.bsq=Get_Gas_BField_RestFrame(j,prims_ij.B, prims_ij.v,prims_ij.b);
+#endif
+    gr_get_conservative_variables(&prims_ij,&cons_j_pred,Wlorentz,CellP[j].gr.gamma,CellP[j].gr.gdet);
+
+    Sj_check = log(prims_ij.u) + (1.0-GAMMA_DEFAULT)*log(prims_ij.rho0);
+    uj_tmp = prims_ij.u;
+
+    //Merge quantities
+    cons_j_pred.D = (cons_j_pred.D*Vj + cons_i.D*Vi)/Vtot;
+    cons_j_pred.tau = (cons_j_pred.tau*Vj + cons_i.tau*Vi)/Vtot;
+    for(k=0;k<3;k++) cons_j_pred.S[k] = (cons_j_pred.S[k]*Vj + cons_i.S[k]*Vi)/Vtot;
+#ifdef MAGNETIC
+    for(k=0;k<3;k++) cons_j_pred.B[k] = (cons_j_pred.B[k]*Vj + cons_i.B[k]*Vi)/Vtot;
+#endif
+
+    /* --- Update kicked quantities --- */
+    //i-th particle
+    for(k=0;k<3;k++) prims_ij.v[k]=P[i].Vel[k];
+    Vphys(prims_ij.v,CellP[i].gr.beta,CellP[i].gr.alpha);
+    Wlorentz=lorentz_factor(CellP[i].gr.gamma,prims_ij.v, gr_limiter_i);
+    prims_ij.rho0=P[i].Mass/Wlorentz/CellP[i].gr.gdet/Vi;
+    prims_ij.u=CellP[i].InternalEnergy;
+    prims_ij.p=gr_pressure_rho0_u(prims_ij.rho0,prims_ij.u);
+#ifdef MAGNETIC
+    for(k=0;k<3;k++) prims_ij.B[k]=CellP[i].B[k]/Vi/CellP[i].gr.gdet;
+    prims_ij.bsq=Get_Gas_BField_RestFrame(i,prims_ij.B, prims_ij.v,prims_ij.b);
+#endif
+    gr_get_conservative_variables(&prims_ij,&cons_i,Wlorentz,CellP[i].gr.gamma,CellP[i].gr.gdet);
+
+    //j-th particle
+    for(k=0;k<3;k++) prims_ij.v[k]=P[j].Vel[k];
+    Vphys(prims_ij.v,CellP[j].gr.beta,CellP[j].gr.alpha);
+    Wlorentz=lorentz_factor(CellP[j].gr.gamma,prims_ij.v, gr_limiter_j);
+    prims_ij.rho0=P[j].Mass/Wlorentz/CellP[j].gr.gdet/Vj;
+    prims_ij.u=CellP[j].InternalEnergy;
+    prims_ij.p=gr_pressure_rho0_u(prims_ij.rho0,prims_ij.u);
+#ifdef MAGNETIC
+    for(k=0;k<3;k++) prims_ij.B[k]=CellP[j].B[k]/Vj/CellP[j].gr.gdet;
+    prims_ij.bsq=Get_Gas_BField_RestFrame(j,prims_ij.B, prims_ij.v,prims_ij.b);
+#endif
+    gr_get_conservative_variables(&prims_ij,&cons_j,Wlorentz,CellP[j].gr.gamma,CellP[j].gr.gdet);
+
+    //Merge quantities
+    cons_j.D = (cons_j.D*Vj + cons_i.D*Vi)/Vtot;
+    cons_j.tau = (cons_j.tau*Vj + cons_i.tau*Vi)/Vtot;
+    for(k=0;k<3;k++) cons_j.S[k] = (cons_j.S[k]*Vj + cons_i.S[k]*Vi)/Vtot;
+#ifdef MAGNETIC
+    for(k=0;k<3;k++) cons_j.B[k] = (cons_j.B[k]*Vj + cons_i.B[k]*Vi)/Vtot;
+#endif
+
+#else
     de_i = P[i].Mass * CellP[i].DtInternalEnergy + dm_i*CellP[i].InternalEnergy;
     de_j = P[j].Mass * CellP[j].DtInternalEnergy + dm_j*CellP[j].InternalEnergy;
     for(k=0;k<3;k++)
@@ -834,8 +985,9 @@ int merge_particles_ij(int i, int j)
         de_j += dp_j[k] * CellP[j].VelPred[k] / All.cf_atime - 0.5 * dm_j * CellP[j].VelPred[k] * CellP[j].VelPred[k] * All.cf_a2inv;
         dp_ij[k] = dp_i[k] + dp_j[k];
     }
-    dm_ij = dm_i+dm_j;
     de_ij = de_i+de_j;
+#endif // GENERAL_RELATIVITY
+    dm_ij = dm_i+dm_j;
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     CellP[j].MassTrue += CellP[i].MassTrue;
@@ -846,9 +998,6 @@ int merge_particles_ij(int i, int j)
     CellP[i].dMass = 0;
 #endif
 
-    /* make sure to update the conserved variables correctly: mass and momentum are easy, energy is non-trivial */
-    double egy_old = 0;
-    egy_old += mtot * (wt_j*CellP[j].InternalEnergy + wt_i*CellP[i].InternalEnergy); // internal energy //
     double pos_new_xyz[3], dp[3];
     /* for periodic boxes, we need to (arbitrarily) pick one position as our coordinate center. we pick i. then everything defined in
         position differences relative to i. the final position will be appropriately box-wrapped after these operations are completed */
@@ -856,6 +1005,10 @@ int merge_particles_ij(int i, int j)
     NEAREST_XYZ(dp[0],dp[1],dp[2],-1);
     for(k=0;k<3;k++) {pos_new_xyz[k] = P[i].Pos[k] + wt_j * dp[k];}
 
+#ifndef GENERAL_RELATIVITY
+    /* make sure to update the conserved variables correctly: mass and momentum are easy, energy is non-trivial */
+    double egy_old = 0;
+    egy_old += mtot * (wt_j*CellP[j].InternalEnergy + wt_i*CellP[i].InternalEnergy); // internal energy //
     for(k=0;k<3;k++)
     {
         egy_old += mtot*wt_j * 0.5 * P[j].Vel[k]*P[j].Vel[k]*All.cf_a2inv; // kinetic energy (j) //
@@ -872,6 +1025,7 @@ int merge_particles_ij(int i, int j)
         CellP[j].GravWorkTerm[k] = 0; // since we're accounting for the work above and dont want to accidentally double-count //
 #endif
     }
+#endif //GENERAL_RELATIVITY
 
 
     CellP[j].InternalEnergy = wt_j*CellP[j].InternalEnergy + wt_i*CellP[i].InternalEnergy;
@@ -892,21 +1046,65 @@ int merge_particles_ij(int i, int j)
         P[j].GravPM[k] = wt_j*P[j].GravPM[k] + wt_i*P[i].GravPM[k]; // force-conserving //
 #endif
     }
+
+#ifdef GENERAL_RELATIVITY
+#ifdef MAGNETIC
+    double Prim_VBj[3], Prim_VBPredj[3], Prim_DtBj[3];
+    for(k=0;k<3;k++){Prim_VBj[k] = CellP[j].B[k]/CellP[j].gr.gdet; Prim_VBPredj[k] = CellP[j].BPred[k]/CellP[j].gr.gdet; Prim_DtBj[k] = CellP[j].DtB[k]/CellP[j].gr.gdet;}
+#endif
+    set_metric_coefficients(pos_new_xyz,(wt_i*P[i].Potential+wt_j*P[j].Potential),&(CellP[j].gr));
+
+    //Now I have to get back primitives to update v and u
+    double res_con2prim=gr_get_primitive_variables(&cons_j_pred,&prims_ij,&(CellP[j].gr), gr_limiter_j);
+    if(res_con2prim<0) {printf("Warning: failed inversion with code %g in merge/split\n",res_con2prim); endrun(2488);}
+
+    Vcoord(prims_ij.v,CellP[j].gr.beta,CellP[j].gr.alpha);
+    for(k=0;k<3;k++) CellP[j].VelPred[k]=prims_ij.v[k];
+    CellP[j].InternalEnergyPred = prims_ij.u;
+
+    double Schild = log(prims_ij.u) + (1.0-GAMMA_DEFAULT)*log(prims_ij.rho0);
+
+    res_con2prim=gr_get_primitive_variables(&cons_j,&prims_ij,&(CellP[j].gr), gr_limiter_j);
+    if(res_con2prim<0) {printf("Warning: failed inversion with code %g in merge/split\n",res_con2prim); endrun(2488);}
+
+    Vcoord(prims_ij.v,CellP[j].gr.beta,CellP[j].gr.alpha);
+    for(k=0;k<3;k++) P[j].Vel[k]=prims_ij.v[k];
+    CellP[j].InternalEnergy = prims_ij.u;
+
+    //As for acc and udot, we reset them to 0, since they are recalculated anyway during kick and predict steps
+    for(k=0;k<3;k++) {CellP[j].HydroAccel[k]=0;}
+    CellP[j].DtInternalEnergy=0;
+
+    //We don't want the entropy to suffer from sudden artificial boosts
+    if(Schild > DMAX(Si_check, Sj_check)){
+        CellP[j].InternalEnergyPred = Si_check>Sj_check ? ui_tmp : uj_tmp;
+        CellP[j].InternalEnergy = CellP[j].InternalEnergyPred;
+    }
+#endif
+
 #ifdef MAGNETIC 
     // we evolve the conservative variables VB and Vpsi, these should simply add in particle-merge operations //
     for(k=0;k<3;k++) {
         double B_before_split = (CellP[i].B[k] + CellP[j].B[k]) / (volume_before_merger_i + volume_before_merger_j); /* calculate the real value of B pre-split to know what we need to correctly re-initialize to once the volume partition can be recomputed. here since VB is the conserved variable explicitly integrated, that gets added with the pre-summation volumes (so we take a volume-weighted mean here) */
         CellP[j].BField_prerefinement[k] = B_before_split; CellP[i].BField_prerefinement[k] = B_before_split; /* record the real value of B pre-split to know what we need to correctly re-initialize to once the volume partition can be recomputed */
+#ifdef GENERAL_RELATIVITY
+        /* GR: the conserved field carries sqrt(gamma), which changes with the merged position: convert with the old/new metric determinants */
+        CellP[j].B[k] = (Prim_VBj[k] + (CellP[i].B[k]/CellP[i].gr.gdet))*CellP[j].gr.gdet;
+        CellP[j].BPred[k] = (Prim_VBPredj[k] + (CellP[i].BPred[k]/CellP[i].gr.gdet))*CellP[j].gr.gdet;
+        CellP[j].DtB[k] = (Prim_DtBj[k] + (CellP[i].DtB[k]/CellP[i].gr.gdet))*CellP[j].gr.gdet;
+#else
         CellP[j].B[k] += CellP[i].B[k]; CellP[j].BPred[k] += CellP[i].BPred[k]; CellP[j].DtB[k] += CellP[i].DtB[k]; /* simply add conserved quantities */
+#endif
         //CellP[j].DtB[k] = CellP[i].DtB[k] = 0; CellP[j].BPred[k] = CellP[j].B[k]; CellP[i].BPred[k] = CellP[i].B[k]; /* zero the time derivatives and cleaning terms: these will be re-calculated self-consistently from the new mesh configuration */
     }
     CellP[j].divB += CellP[i].divB; // CellP[i].divB = CellP[j].divB = 0; /* this is a conserved quantity (volume-integrated) so can simply be added */
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
     CellP[j].Phi += CellP[i].Phi; CellP[j].PhiPred += CellP[i].PhiPred; CellP[j].DtPhi += CellP[i].DtPhi; for(k=0;k<3;k++) {CellP[j].DtB_PhiCorr[k] += CellP[j].DtB_PhiCorr[k];} /* on a merge, can simply add all of these conservative quantities */
     //CellP[i].Phi = CellP[i].PhiPred = CellP[i].DtPhi = CellP[j].Phi = CellP[j].PhiPred = CellP[j].DtPhi = 0; for(k=0;k<3;k++) {CellP[i].DtB_PhiCorr[k] = CellP[j].DtB_PhiCorr[k] = 0;} /* zero the time derivatives and cleaning terms: these will be re-calculated self-consistently from the new mesh configuration */
 #endif
 #endif
 
+#ifndef GENERAL_RELATIVITY
     /* correct our 'guess' for the internal energy with the residual from exact energy conservation */
     double egy_new = mtot * CellP[j].InternalEnergy;
     for(k=0;k<3;k++) {egy_new += mtot * 0.5*P[j].Vel[k]*P[j].Vel[k]*All.cf_a2inv;}
@@ -923,9 +1121,14 @@ int merge_particles_ij(int i, int j)
         CellP[j].HydroAccel[k] = (dp_ij[k] - dm_ij * CellP[j].VelPred[k]/All.cf_atime) / mtot;
         de_ij -= mtot * CellP[j].VelPred[k]/All.cf_atime * CellP[j].HydroAccel[k] + 0.5 * dm_ij * CellP[j].VelPred[k]*CellP[j].VelPred[k]*All.cf_a2inv;
     }
-    CellP[j].DtInternalEnergy = de_ij;
+    CellP[j].DtInternalEnergy = de_ij / mtot; /* de_ij is the total (thermal) energy rate of the merged cell: convert to a specific rate, consistent with HydroAccel above (P[j].Mass is still the pre-merger mass here) */
+#endif //GENERAL_RELATIVITY
     // to be conservative adopt the maximum signal velocity and kernel length //
+#ifdef GENERAL_RELATIVITY
+    CellP[j].MaxSignalVel = (CellP[j].MaxSignalVel + CellP[i].MaxSignalVel)/(1 + 0.25*CellP[j].MaxSignalVel*CellP[i].MaxSignalVel); /* relativistic composition of the two signal speeds */
+#else
     CellP[j].MaxSignalVel = sqrt(CellP[j].MaxSignalVel*CellP[j].MaxSignalVel + CellP[i].MaxSignalVel*CellP[i].MaxSignalVel); /* need to be conservative */
+#endif
     P[j].KernelRadius = pow(pow(P[j].KernelRadius,NUMDIMS)+pow(P[i].KernelRadius,NUMDIMS),1.0/NUMDIMS); /* sum the volume of the two particles */
     CellP[j].ConditionNumber = CellP[j].ConditionNumber + CellP[i].ConditionNumber; /* sum to be conservative */
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
@@ -1036,6 +1239,10 @@ int merge_particles_ij(int i, int j)
         P[i].dp[k] += P[i].Mass*P[i].Vel[k] - p_old_i[k];
         P[j].dp[k] += P[j].Mass*P[j].Vel[k] - p_old_j[k];
     }
+#ifdef GENERAL_RELATIVITY
+    //Recompute Density (we need a reasonable guess)
+    CellP[j].Density =mtot/pow(Get_Particle_Size(j),NUMDIMS);
+#endif
     /* call the pressure routine to re-calculate pressure (and sound speeds) as needed */
     set_eos_pressure(j);
 #if defined(MHD_CONSERVE_B_ON_REFINEMENT)

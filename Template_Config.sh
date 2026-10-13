@@ -27,9 +27,9 @@
 #BOX_BND_PARTICLES          # particles with ID=0 are forced in place (their accelerations are set =0): use for special boundary conditions where these particles represent fixed "walls"
 #BOX_SHEARING=1             # shearing box boundaries: 1=r-z sheet (r,z,phi coordinates), 2=r-phi sheet (r,phi,z), 3=r-phi-z box, 4=as 3, with vertical gravity
 #BOX_SHEARING_Q=(3./2.)     # shearing box q=-dlnOmega/dlnr; will default to 3/2 (Keplerian) if not set
-#BOX_LONG_X=140             # modify box dimensions (non-square finite box): multiply X (not compatible with periodic gravity: if BOX_PERIODIC or PMGRID is active, make sure SELFGRAVITY_OFF or GRAVITY_NOT_PERIODIC is on)
-#BOX_LONG_Y=1               # modify box dimensions (non-square finite box): multiply Y
-#BOX_LONG_Z=1               # modify box dimensions (non-square finite box): multiply Z
+#BOX_LONG_X=8               # modify box dimensions (non-square finite box): multiply X (not compatible with periodic gravity: if BOX_PERIODIC or PMGRID is active, make sure SELFGRAVITY_OFF or GRAVITY_NOT_PERIODIC is on)
+#BOX_LONG_Y=(0.024681724007856502)               # modify box dimensions (non-square finite box): multiply Y
+#BOX_LONG_Z=(1.0/12.0)               # modify box dimensions (non-square finite box): multiply Z
 #BOX_REFLECT_X=0            # make the x-boundary reflecting (assumes a box 0<x<BoxSize_X, where BoxSize_X=BoxSize*BOX_LONG_X, if BOX_LONG_X is set); if no value set or =0, both x-boundaries reflect, if =-1, only lower-x (x=0) boundary reflects, if =+1, only upper-x (x=BoxSize) boundary reflects
 #BOX_REFLECT_Y              # make the y-boundary reflecting (assumes a box 0<y<BoxSize_Y); if no value set or =0, both y-boundaries reflect, if =-1, only lower-y (y=0) boundary reflects, if =+1, only upper-y (y=BoxSize) boundary reflects
 #BOX_REFLECT_Z              # make the z-boundary reflecting (assumes a box 0<z<BoxSize_Z); if no value set or =0, both z-boundaries reflect, if =-1, only lower-z (z=0) boundary reflects, if =+1, only upper-z (z=BoxSize) boundary reflects
@@ -57,7 +57,7 @@
 #HYDRO_DENSITY_SPH              # solve hydro using SPH with the 'density-sph' formulation (GADGET-2 & GASOLINE SPH)
 ## -----------------------------------------------------------------------------------------------------
 # --------------------------------------- Kernel Options
-#KERNEL_FUNCTION=3              # Choose the kernel function (2=quadratic peak, 3=cubic spline [default], 4=quartic spline, 5=quintic spline, 6=Wendland C2, 7=Wendland C4, 8=2-part quadratic, 9=Wendland C6)
+#KERNEL_FUNCTION=7              # Choose the kernel function (2=quadratic peak, 3=cubic spline [default], 4=quartic spline, 5=quintic spline, 6=Wendland C2, 7=Wendland C4, 8=2-part quadratic, 9=Wendland C6)
 #KERNEL_CRK_FACES               # Use the consistent reproducing kernel [higher-order tensor corrections to kernel above, compared to our usual matrix formalism] from Frontiere, Raskin, and Owen to define the faces in MFM/MFV methods. can give more accurate closure, potentially improved accuracy in MHD problems. remains experimental for now.
 ####################################################################################################
 
@@ -68,7 +68,7 @@
 ####################################################################################################
 ## ----------------------------------------------------------------------------------------------------
 # --------------------------------------- Gas (or Material) Equations-of-State [some EOS options for specific regimes, like galaxy or star formation simulations, are also described in the blocks below for those sections]
-#EOS_GAMMA=(5.0/3.0)            # Polytropic Index of Gas (for an ideal gas law): if not set and no other (more complex) EOS set, defaults to GAMMA=5/3
+#EOS_GAMMA=(2.0)            # Polytropic Index of Gas (for an ideal gas law): if not set and no other (more complex) EOS set, defaults to GAMMA=5/3
 #EOS_HELMHOLTZ                  # Use Timmes & Swesty 2000 EOS (for e.g. stellar or degenerate equations of state); if additional tables needed, download at http://www.tapir.caltech.edu/~phopkins/public/helm_table.dat (or the GitHub site)
 #EOS_TILLOTSON                  # Use Tillotson (1962) EOS (for solid/liquid+vapor bodies, impacts); custom EOS params can be specified or pre-computed materials used. see User Guide and Deng et al., arXiv:1711.04589
 #EOS_ELASTIC                    # treat fluid as elastic or plastic (or visco-elastic) material, obeying Hooke's law with full stress terms and von Mises yield model. custom EOS params can be specified or pre-computed materials used.
@@ -109,6 +109,24 @@
 #GRAIN_BACKREACTION             # account for momentum of grains pushing back on gas (from drag terms); users should cite Moseley et al., 2018, arXiv:1810.08214.
 #GRAIN_LORENTZFORCE             # charged grains feel Lorentz forces (requires MAGNETIC); if used with GRAIN_EPSTEIN_STOKES flag, will also compute Coulomb drag (grain charges self-consistently computed from gas properties). Need to set GrainType=2. Please cite Seligman et al., 2019, MNRAS 485 3991
 #GRAIN_COLLISIONS               # model collisions between grains (super-particles; so this is stochastic). Default = hard-sphere scattering, with options for inelastic or velocity-dependent terms. Approved users please cite papers above and Rocha et al., MNRAS 2013, 430, 81
+####################################################################################################
+
+####################################################################################################
+# --------------------------------------- General relativity
+# ------------------------------- users of these routines should cite Lupi 2023, MNRAS, 519, 1115 (GR hydro) and Fedrigo & Lupi 2025, A&A, 700, A112 (GR MHD)
+####################################################################################################
+#GENERAL_RELATIVITY=0           # turns on general relativistic hydrodynamics; 0=HLL solver/1=GFORCE solver/2=HLLC solver from Mignone & Bodo (2005). Does not work with SPH; forces SELFGRAVITY_OFF
+#GR_METRIC=2                    # metric: <0=user-defined tabulated metric (gr/custom_metric.h), 0=Minkowski, 1=Kerr (default; GR_Mass/GR_Spin in the parameterfile), 2=superposed binary black hole (gr/SuperposedBBH.h)
+#USE_BOYERLINDQUIST             # force to use Boyer Lindquist coordinates for GR_METRIC==1. Otherwise the metric is calculated in KerrSchild coordinates as default
+#GR_EXCISION_RADIUS=75          # particle inside this radius (in units of the horizon radius) are removed from the simulation, to avoid divergence in the BH
+#DIVBCLEANING_GR                # turns on divergence cleaning in order to keep divB low (always on with GENERAL_RELATIVITY+MAGNETIC); cleaning speed c_h, damping K and boost f are set in gr/gr.h (see gr/ROUTE_B_cleaning_notes.pdf). DIVB_VARYING_CH is retired.
+#GR_CLEANING_LEGACY             # regression mode: reproduces the pre-Route-B cleaning (c_h=1 states, old damping, old signal-velocity boost) with the same binary; HLL/GForce only
+#GR_ENTROPY_SWITCH              # Compute the Internal Energy Density from the conserved Entropy function P/rho^Gamma in the case P_mag > P_th
+#GEOMETRIC_REFINEMENT           # Hyper-Lagrangian refinement with particle splitting. Caution, the refinement parameters are hard-coded (mesh/merge_split.cc); MaxRefinementLevel is read from the parameterfile
+#GR_BETACOOLING                 # Beta cooling prescription, applied as source tests. Only works with GR_METRIC=1 and GR_METRIC=2. Beta parameter defined in gr.h
+#GR_REMOVE_GRAD=1000            # (GR_METRIC=2 only) Forcing the radial gradient of the pressure to be flat and damping B at the external edge of an accretion disc (Outer edge = GR_REMOVE_GRAD)
+#GR_USECBWAVES                  # (GR_METRIC=2 only) read the binary black hole trajectory from the table 'cbwaves.txt' instead of evolving the black hole particles
+#GR_INCLUDE_STELLAR_HARDENING   # (GR_METRIC=2 only) add the stellar-hardening drag on the binary (Sesana, Haardt & Madau 2006 rates; Bonetti et al. 2016 implementation); needs GR_StellarHardening_Rho and GR_StellarHardening_Sigma in the parameterfile
 ####################################################################################################
 
 
@@ -502,7 +520,7 @@
 #FREEZE_HYDRO                      # zeros all fluxes from RP and doesn't let particles move (for testing additional physics layers)
 #EOS_ENFORCE_ADIABAT=(1.0)         # if set, this forces gas to lie -exactly- along the adiabat P=EOS_ENFORCE_ADIABAT*(rho^GAMMA)
 #HYDRO_REPLACE_RIEMANN_KT          # replaces the hydro Riemann solver (HLLC) with a Kurganov-Tadmor flux derived in Panuelos, Wadsley, and Kevlahan, 2019. works with MFM/MFV/fixed-grid methods [-without- MHD active, but other modules are fine]. more diffusive, but smoother, and more stable convergence results
-#SLOPE_LIMITER_TOLERANCE=1         # sets the slope-limiters used. higher=more aggressive (less diffusive, but less stable). 1=default. 0=conservative. use on problems where sharp density contrasts in poor particle arrangement may cause errors. 2=use the original GIZMO paper (more aggressive) slope-limiters. more accurate for smooth problems, but these can introduce numerical instability in problems with poorly-resolved large noise or density contrasts (e.g. multi-phase, self-gravitating flows)
+#SLOPE_LIMITER_TOLERANCE=0         # sets the slope-limiters used. higher=more aggressive (less diffusive, but less stable). 1=default. 0=conservative. use on problems where sharp density contrasts in poor particle arrangement may cause errors. 2=use the original GIZMO paper (more aggressive) slope-limiters. more accurate for smooth problems, but these can introduce numerical instability in problems with poorly-resolved large noise or density contrasts (e.g. multi-phase, self-gravitating flows)
 #ENERGY_ENTROPY_SWITCH_IS_ACTIVE   # enable energy-entropy switch as described in GIZMO methods paper. This can greatly improve performance on some problems where the the flow is very cold and highly super-sonic. it can cause problems in multi-phase flows with strong cooling, though, and is not compatible with non-barytropic equations of state
 #FORCE_ENTROPIC_EOS_BELOW=(0.01)   # set (manually) the alternative energy-entropy switch which is enabled by default in MFM/MFV: if relative velocities are below this threshold, it uses the entropic EOS
 #HYDRO_KERNEL_SURFACE_VOLCORR      # attempt to correct SPH/MFM/MFV cell volumes for free-surface effects, using the estimated boundary correction for the Wendland C2 kernel (works with others but most accurate for this) based on asymmetry of neighbors within kernel, as calibrated in Reinhardt & Stadel 2017 (arXiv:1701.08296), see e.g. their Fig 3
@@ -526,6 +544,7 @@
 #ADAPTIVE_TREEFORCE_UPDATE=0.06    # use the tidal timescale to estimate how often gravity needs to be updated, updating a gas cell's gravity no more often than ADAPTIVE_TREEFORCE_UPDATE * dt_tidal, the factor N_f in Grudic 2020 arxiv:2010.13792 (cite this). Smaller is more accurate, larger is faster, should be tuned for your problem if used.
 #RANDOMIZE_GRAVTREE                # move the top tree node around randomly so that treeforce errors are not correlated between one treebuild and another. cite Grudic+ arXiv:2010.11254
 #GRAVITY_SPHERICAL_SYMMETRY=0      # modifies the tree gravity solver to give the solution assuming spherical symmetry about the origin (if BOX_PERIODIC is not enabled) or the box center. Useful for IC generation and test problems. Numerical value specifies a minimum softening length. (cite Lane et al., arXiv:2110.14816)
+#GR_TEST_PARTICLE                 # forces gas to behave like collisionless particles, use for testing of source terms in GR hydrodynamics
 #SINGLE_STAR_DIRECT_GRAVITY_RADIUS=1000. # enforce direct gravity summation for star-star gravity interactions *and* tree searches (e.g. for timestepping, binarity checks) within this radius *in AU*
 #ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT=(1) # impose a hard upper limit (arbitrarily) to the softening kernel size for adaptive gravitational softening for gas cells
 #ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING # use the 'average the forces' implementation of force symmtrization in the gravity solver, instead of the default 'calculate forces for the larger softening', when two particles or cells with different force softening values interact inside each others kernels

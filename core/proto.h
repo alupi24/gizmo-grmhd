@@ -149,6 +149,10 @@ int ngb_treefind_pairs_threads_targeted(MyDouble searchcenter[3], MyFloat rkern,
                                            int mode, int *exportflag, int *exportnodecount, int *exportindex,
                                            int *ngblist, int TARGET_BITMASK);
 
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC>0)
+int check_BH_intersection(MyDouble searchcenter[3], MyFloat rkern, int p);
+#endif
+
 
 
 void do_distortion_tensor_kick(int i, double dt_gravkick);
@@ -364,6 +368,10 @@ double INLINE_FUNC Get_Gas_effective_soundspeed_i(int i);
 double INLINE_FUNC Get_Gas_thermal_soundspeed_i(int i);
 double Get_Gas_Alfven_speed_i(int i);
 double Get_Gas_Fast_MHD_wavespeed_i(int i);
+#if defined(GENERAL_RELATIVITY) && defined(MAGNETIC)
+double Get_Gas_Alfven_speed_i(int i, double *vphys);
+double Get_Gas_Fast_MHD_wavespeed_i(int i, double *vphys, double Wfac, double vcoord_n, double beta_n, double gamma_uii);
+#endif
 double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, double rho, double *xH0, double *ne_guess, double urad_from_uvb_in_G0, int target);
 void update_explicit_molecular_fraction(int i, double dtime_cgs);
 double molecfrac_rootfind_function(double fH2, double x00, double x01, double x_b_0, double x_c, double y_a, double G_LW_dt_unshielded);
@@ -373,7 +381,7 @@ double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral
 double INLINE_FUNC Get_Gas_BField(int i_particle_id, int k_vector_component);
 #ifdef MAGNETIC
 double Get_DtB_FaceArea_Limiter(int i);
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
 double INLINE_FUNC Get_Gas_PhiField(int i_particle_id);
 double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id);
 #endif

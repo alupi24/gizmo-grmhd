@@ -187,6 +187,13 @@ void drift_particle(int i, integertime time1)
             double dt_gravkick, dt_gravkick_pm, dt_hydrokick, dt_entr;
             dt_entr = dt_hydrokick = (time1 - time0) * UNIT_INTEGERTIME_IN_PHYSICAL(i);
             dt_gravkick = get_gravkick_factor(time0, time1, i, 0);
+
+#if defined(GENERAL_RELATIVITY)
+#if defined(HYDRO_MESHLESS_FINITE_MASS) || (defined(HYDRO_MESHLESS_FINITE_VOLUME) && HYDRO_FIX_MESH_MOTION>=5)
+            do_drift_general_relativity(i,dt_drift); /* corrects the position drift and the kicked variables for the metric change along the path */
+#endif
+            do_predict_general_relativity(i,dt_hydrokick); /* predicts VelPred/InternalEnergyPred from the conserved variables (and zeroes HydroAccel/DtInternalEnergy to avoid double counting) */
+#endif
             
 #ifdef PMGRID
             dt_gravkick_pm = get_gravkick_factor(time0, time1, -1, 0);
@@ -209,7 +216,9 @@ void drift_particle(int i, integertime time1)
             P[i].Mass = DMAX(P[i].Mass + CellP[i].DtMass * dt_entr, 0.5 * CellP[i].MassTrue);
 #endif
             
-            CellP[i].Density *= exp(-divv_fac);
+#ifndef GENERAL_RELATIVITY
+            CellP[i].Density *= exp(-divv_fac); /* GR: the density is predicted below, from the volume change computed in the Riemann problems */
+#endif
             double etmp = CellP[i].InternalEnergyPred + CellP[i].DtInternalEnergy * dt_entr;
 #if defined(RADTRANSFER) && defined(RT_EVOLVE_ENERGY) /* block here to deal with tricky cases where radiation energy density is -much- larger than thermal */ 
             int kfreq; double erad_tot=0,tot_e_min=0,enew=0,int_e_min=0,dErad=0,rsol_fac=C_LIGHT_CODE_REDUCED(i)/C_LIGHT_CODE; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {erad_tot+=CellP[i].Rad_E_gamma_Pred[kfreq];}
@@ -231,14 +240,35 @@ void drift_particle(int i, integertime time1)
 #endif
             
 #if (HYDRO_FIX_MESH_MOTION > 0)
+#ifdef GENERAL_RELATIVITY
+            /* GR: use the volume variation computed in the Riemann problems (DtVolume) to predict the kernel radius and the density */
+            divv_fac = CellP[i].DtVolume*dt_hydrokick/pow(Get_Particle_Size(i),NUMDIMS);
+            if(divv_fac > +divv_fac_max) divv_fac = +divv_fac_max;
+            if(divv_fac < -divv_fac_max) divv_fac = -divv_fac_max;
+#endif
             P[i].KernelRadius *= exp((double)divv_fac / ((double)NUMDIMS));
             if(P[i].KernelRadius < All.MinKernelRadius) {P[i].KernelRadius = All.MinKernelRadius;}
             if(P[i].KernelRadius > All.MaxKernelRadius) {P[i].KernelRadius = All.MaxKernelRadius;}
 #ifdef ADAPTIVE_GRAVSOFT_FORALL
             if(1 & ADAPTIVE_GRAVSOFT_FORALL) {P[i].AGS_KernelRadius = P[i].KernelRadius;} /* gas is AGS-active, so needs to be set here to match updated KernelRadius */
 #endif
+#ifdef GENERAL_RELATIVITY
+            CellP[i].Density *= exp(-divv_fac);
+#endif
 #endif
             drift_extra_physics(i, time0, time1, dt_entr);
+
+#if defined(USE_KERRSCHILD_COORDINATES) && defined(PARTICLE_EXCISION) && defined(GENERAL_RELATIVITY) && defined(MAGNETIC)
+            if(TimeBinActive[P[i].TimeBin]){
+                double r, r_EH, M_BH, a_BH;
+                r = pow(P[i].Pos[0],2)+pow(P[i].Pos[1],2)+pow(P[i].Pos[2],2);
+                r = sqrt(r);
+                M_BH = All.MetricParams[0];
+                a_BH = All.MetricParams[1];
+                r_EH = M_BH*(1+sqrt(1-(a_BH*a_BH)));
+                if(r<=r_EH){smooth_conservatives_inside_horizon(i,r,r_EH, M_BH);}
+            }
+#endif
 
             set_eos_pressure(i);
         }
@@ -268,7 +298,7 @@ void drift_extra_physics(int i, integertime tstart, integertime tend, double dt_
     int kB;
     double BphysVolphys_to_BcodeVolCode = 1 / All.cf_atime;
     for(kB=0;kB<3;kB++) {CellP[i].BPred[kB] += CellP[i].DtB[kB] * dt_entr * BphysVolphys_to_BcodeVolCode;} // fluxes are always physical, convert to code units //
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
     double PhiphysVolphys_to_PhicodeVolCode = 1 / All.cf_a3inv; // for mass-based phi fluxes (otherwise coefficient is 1)
     double dtphi_code = (PhiphysVolphys_to_PhicodeVolCode) * CellP[i].DtPhi;
     CellP[i].PhiPred += dtphi_code  * dt_entr;
@@ -280,7 +310,7 @@ void drift_extra_physics(int i, integertime tstart, integertime tend, double dt_
 #endif
 #ifdef MHD_ALTERNATIVE_LEAPFROG_SCHEME
     for(kB=0;kB<3;kB++) {CellP[i].B[kB]=CellP[i].BPred[kB];}
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
     CellP[i].Phi=CellP[i].PhiPred;
 #endif
 #endif
@@ -445,15 +475,30 @@ double Get_DtB_FaceArea_Limiter(int i)
     double dt_entr = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
     int j; double dB[3],dBmag=0,Bmag=0;
     /* check the magnitude of the predicted change in B-fields, vs. B-magnitude */
+#ifndef GENERAL_RELATIVITY
     for(j=0;j<3;j++)
     {
         dB[j] = CellP[i].DtB[j] * dt_entr / All.cf_atime; /* converts to code units of Vol_code*B_code = Vol_phys*B_phys/a */
         dBmag += dB[j]*dB[j];
         Bmag += CellP[i].BPred[j]*CellP[i].BPred[j];
     }
+#else
+    for(j=0;j<3;j++){dB[j] = CellP[i].DtB[j] * dt_entr;}
+    double Bprim[3], Bprim_cov[3], dB_cov[3];
+    for(int k=0;k<3;k++){Bprim[k]=CellP[i].BPred[k]*CellP[i].Density/CellP[i].gr.gdet/P[i].Mass;}
+    raise_lower_indices(CellP[i].gr.gamma,Bprim,Bprim_cov);
+    raise_lower_indices(CellP[i].gr.gamma,dB,dB_cov);
+    for(int k=0;k<3;k++){dBmag += dB[k]*dB_cov[k]; Bmag += Bprim[k]*Bprim_cov[k];}
+#endif
     dBmag = sqrt(dBmag); Bmag = sqrt(Bmag);
+#ifdef GENERAL_RELATIVITY
+    Bmag *= CellP[i].gr.gdet * P[i].Mass/CellP[i].Density; /* GR: |B| in the units of the evolved (conserved) variable sqrt(gamma)*B*V, the same as dB below */
+#endif
     /* also make sure to check the actual pressure, since if P>>B, we will need to allow larger changes in B per timestep */
     double P_BV_units = sqrt(2.*CellP[i].Pressure*All.cf_a3inv)*P[i].Mass/CellP[i].Density / All.cf_a2inv;
+#ifdef GENERAL_RELATIVITY
+    P_BV_units *= CellP[i].gr.gdet; /* same (conserved) units as Bmag and dB */
+#endif
     /* the above should be in CODE Bcode*Vol_code units! */
     double Bmag_max = DMAX(Bmag, DMIN( P_BV_units, 10.*Bmag ));
     /* now check how accurately the cell is 'closed': the face areas are ideally zero */
@@ -465,11 +510,30 @@ double Get_DtB_FaceArea_Limiter(int i)
     {
         double area_norm_min_threshold = 0.001;
         double area_norm_weight = 200.0;
+        double max_tol = 0.01;
+#ifdef GENERAL_RELATIVITY
+        area_norm_min_threshold = 0.01;
+        area_norm_weight = 4000.0;
+        max_tol = 0.001;
+#endif
         if(area_sum/area_norm > area_norm_min_threshold)
         {
-            double tol = (All.CourantFac/0.2) * DMAX( 0.01, area_norm/(area_norm_weight * area_sum) );
+            double tol = (All.CourantFac/0.2) * DMAX( max_tol, area_norm/(area_norm_weight * area_sum) );
             tol *= Bmag_max; /* give the limiter dimensions */
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC==1)
+            /* Kerr metric: apply the limiter only in a shell just outside the excision boundary (r < 1.4 x excision radius = 1.4*GR_EXCISION_RADIUS*r_H),
+               with r measured from the black hole (at the origin, or at the box centre for periodic boxes) */
+            double dp_BH[3]; for(j=0;j<3;j++) {dp_BH[j]=P[i].Pos[j];}
+#ifdef BOX_PERIODIC
+            dp_BH[0] -= boxHalf_X; dp_BH[1] -= boxHalf_Y; dp_BH[2] -= boxHalf_Z;
+#endif
+            double a_BH[3] = {0,0,All.MetricParams[1]};
+            if(sqrt(dp_BH[0]*dp_BH[0] + dp_BH[1]*dp_BH[1] + dp_BH[2]*dp_BH[2]) < 1.4*GR_EXCISION_RADIUS*EHradius(All.MetricParams[0],a_BH)){
+                if(dBmag>0 && tol/dBmag < 1.0){return tol/dBmag;}
+            }
+#else
             if(dBmag > tol) {return tol/dBmag;} /* now actually check if we exceed this */
+#endif
         }
     }
     return 1;
@@ -477,7 +541,7 @@ double Get_DtB_FaceArea_Limiter(int i)
 }
 
 
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
 double INLINE_FUNC Get_Gas_PhiField(int i_particle_id)
 {
     //return CellP[i_particle_id].PhiPred * CellP[i_particle_id].Density / P[i_particle_id].Mass; // volumetric phy-flux (requires extra term compared to mass-based flux)
@@ -487,6 +551,14 @@ double INLINE_FUNC Get_Gas_PhiField(int i_particle_id)
 double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id)
 {
     /* this timescale should always be returned as a -physical- time */
+#ifdef GENERAL_RELATIVITY
+#ifndef GR_CLEANING_LEGACY
+    /* parabolic damping of psihat: rate = alpha*sigma*c_h with sigma = K/Delta_x (Fedrigo & Lupi 2025), using the Route B cleaning speed of the particle */
+    return KAPPA_CLEANING*CellP[i_particle_id].gr.alpha*CellP[i_particle_id].CleaningSpeed/Get_Particle_Size(i_particle_id);
+#else
+    return KAPPA_CLEANING_LEGACY*CellP[i_particle_id].gr.alpha*fabs(0.5*CellP[i_particle_id].MaxSignalVel); /* old live branch (no 1/Delta_x) */
+#endif
+#else
 #ifdef HYDRO_SPH
     /* PFH: add simple damping (-phi/tau) term */
     double damping_tinv = 0.5 * All.DivBcleanParabolicSigma * (CellP[i_particle_id].MaxSignalVel / (All.cf_atime*Get_Particle_Size(i_particle_id)));
@@ -542,6 +614,7 @@ double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id)
 #endif
 #endif
     return damping_tinv;
+#endif //GENERAL_RELATIVITY
 }
 
 #endif // dedner

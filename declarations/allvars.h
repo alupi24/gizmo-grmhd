@@ -876,9 +876,11 @@ extern struct global_data_all_processes
 #ifdef SPH_TP12_ARTIFICIAL_RESISTIVITY
   double ArtMagDispConst;	/*!< Sets the parameter \f$\alpha\f$ of the artificial magnetic disipation */
 #endif
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
   double FastestWaveSpeed;
   double FastestWaveDecay;
+#endif
+#if defined(DIVBCLEANING_DEDNER)
   double DivBcleanParabolicSigma;
   double DivBcleanHyperbolicSigma;
 #endif
@@ -967,6 +969,22 @@ extern struct global_data_all_processes
   double Sink_jet_precess_degree;
   double Sink_jet_precess_period;
 #endif
+
+#ifdef GENERAL_RELATIVITY
+#if (GR_METRIC==1)
+  double MetricParams[2]; //This contains the parameters read from the param file (mass and spin by default)
+#elif (GR_METRIC==2)
+  double MetricSpins[6]; //This contains the spins of the black holes read from the param file
+#ifdef GR_INCLUDE_STELLAR_HARDENING
+  double rho_hard;   //stellar density of the background used for the hardening of the binary (code units, read from the param file)
+  double sigma_hard; //stellar velocity dispersion of the background used for the hardening of the binary (code units, read from the param file)
+#endif
+#endif
+#endif
+
+#if defined(GEOMETRIC_REFINEMENT)
+  int MaxRefinementLevel;
+#endif
 }
 All;
 
@@ -974,6 +992,17 @@ All;
 
 #include "particle_data.h"
 #include "cell_data.h"
+
+#ifdef GENERAL_RELATIVITY
+extern struct gr_particle_data
+{
+  MyIDType pID;
+  MyDouble Mass;
+  MyDouble Spin[3];
+  MyDouble Pos[3];
+  MyDouble Vel[3];
+} *grP;
+#endif
 
 
 
@@ -1233,6 +1262,9 @@ enum iofields
   IO_MASS,
   IO_U,
   IO_RHO,
+#ifdef GENERAL_RELATIVITY
+  IO_RHO0,
+#endif
   IO_NE,
   IO_NH,
   IO_KERNELRADIUS,
@@ -1356,6 +1388,9 @@ enum iofields
   IO_DELAY_TIME_HII,
   IO_MOLECULARFRACTION,
   IO_SHOCKMACHNUM,
+#ifdef GENERAL_RELATIVITY
+  IO_METRIC,
+#endif
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */
 };
 

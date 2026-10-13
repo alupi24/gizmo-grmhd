@@ -64,6 +64,24 @@ void compute_global_quantities_of_system(void)
         for(j = 0; j < 3; j++) {vel[j] += P[i].GravPM[j] * dt_gravkick_pm;}
 #endif
         
+#ifdef GENERAL_RELATIVITY
+        if(P[i].Type==0)
+        {
+            int gr_limiter=0;
+            double dpl[3]; for(j=0;j<3;j++) {dpl[j]=P[i].Pos[j];}
+#if (GR_METRIC==2)
+            for(j=0;j<3;j++) {dpl[j] = -P[i].Min_xyz_to_Sink[j];}
+#endif
+            if(dpl[0]*dpl[0]+dpl[1]*dpl[1]+dpl[2]*dpl[2] <= pow(GAMMA_LIMITER_RADIUS,2)) gr_limiter=1;
+            double h=1+CellP[i].InternalEnergy+CellP[i].Pressure/gr_get_primitive_density(CellP[i].Density,P[i].Vel,&(CellP[i].gr), gr_limiter);
+            double vphys[3]={P[i].Vel[0],P[i].Vel[1],P[i].Vel[2]};
+            Vphys(vphys,CellP[i].gr.beta,CellP[i].gr.alpha);
+            double W=lorentz_factor(CellP[i].gr.gamma,vphys, gr_limiter);
+            double S[3]={h*W*vphys[0],h*W*vphys[1],h*W*vphys[2]};
+            sys.EnergyKinComp[P[i].Type] += P[i].Mass*vector_sqnorm(CellP[i].gr.gamma,S);
+        }
+        else
+#endif
         sys.EnergyKinComp[P[i].Type] += 0.5 * P[i].Mass * (vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]) / a2;
         if(P[i].Type == 0) {egyspec = entr; sys.EnergyIntComp[0] += P[i].Mass * egyspec;}
         

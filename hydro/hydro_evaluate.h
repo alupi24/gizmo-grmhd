@@ -91,6 +91,19 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #endif
 
 #ifdef MAGNETIC
+#ifdef GENERAL_RELATIVITY
+    /* GR: b^2 in the fluid rest frame, relativistic Alfven speed v_A^2 = b^2/(rho h + b^2) and magnetosonic speed^2 = c_s^2 (1-v_A^2) + v_A^2 */
+    kernel.b2_i = local.BRest[4];
+    double hstar = local.RestMassDensity*(1.+kernel.spec_egy_u_i) + local.Pressure + kernel.b2_i;
+    kernel.alfven2_i = kernel.b2_i / hstar;
+    double vcsa2_i = kernel.sound_i*kernel.sound_i*(1-kernel.alfven2_i)+kernel.alfven2_i;
+#ifdef DIVBCLEANING_GR
+    out.LocalCleaningSpeed = gr_cleaning_speed(sqrt(vcsa2_i)); /* Route B: local cleaning speed of this particle (Fedrigo & Lupi 2025), stored in CellP.CleaningSpeed */
+#endif
+#ifdef GR_ENTROPY_SWITCH
+    if(local.Entropy <= 0) out.EntropyCheck = 1;
+#endif
+#else //Newtonian MHD
     kernel.b2_i = local.BPred[0]*local.BPred[0] + local.BPred[1]*local.BPred[1] + local.BPred[2]*local.BPred[2];
 #if defined(HYDRO_SPH)
     double magfluxv[3],resistivity_heatflux=0; magfluxv[0]=magfluxv[1]=magfluxv[2]=0;
@@ -109,6 +122,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
     kernel.alfven2_i = kernel.b2_i * fac_magnetic_pressure / local.Density;
     kernel.alfven2_i = DMIN(kernel.alfven2_i, 1000. * kernel.sound_i*kernel.sound_i);
     double vcsa2_i = kernel.sound_i*kernel.sound_i + kernel.alfven2_i;
+#endif // GENERAL_RELATIVITY
 #endif // MAGNETIC //
 
 #ifdef RT_SOLVER_EXPLICIT
@@ -177,10 +191,37 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 /* we require a 'softener' to prevent numerical madness in interpolating functions */
                 rinv_soft = 1.0 / sqrt(r2 + 0.0001*kernel.h_i*kernel.h_i);
                 MyDouble VelPred_j[3]; for(k=0;k<3;k++) {VelPred_j[k]=CellP[j].VelPred[k];} // set the velocity of neighbor
+#ifdef GENERAL_RELATIVITY
+#ifdef HYDRO_MESHLESS_FINITE_MASS
+                MyDouble VelCoord_j[3]; for(k=0;k<3;k++) {VelCoord_j[k]=CellP[j].VelPred[k];}
+#else
+                MyDouble VelCoord_j[3]; for(k=0;k<3;k++) {VelCoord_j[k]=CellP[j].ParticleVel[k];}
+#endif
+#endif
                 NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,VelPred_j,-1); /* in a shearing box, wrap velocities for shearing boxes if needed [literally does nothing if not shearing box here] */
+#ifdef GENERAL_RELATIVITY
+                /* GR: physical (Eulerian-observer) velocity of j, and the spatial four-velocity W*v used in the reconstruction */
+                Vphys(VelPred_j,CellP[j].gr.beta,CellP[j].gr.alpha);
+                MyDouble FourVelocity_j[3];
+                int gr_limiter_j=0;
+                double dpl_j[3]; for(k=0;k<3;k++) {dpl_j[k]=P[j].Pos[k];}
+#if (GR_METRIC==2)
+                for(k=0;k<3;k++) {dpl_j[k] = -P[j].Min_xyz_to_Sink[k];}
+#endif
+                if(dpl_j[0]*dpl_j[0]+dpl_j[1]*dpl_j[1]+dpl_j[2]*dpl_j[2] <= pow(GAMMA_LIMITER_RADIUS,2)) gr_limiter_j=1;
+                double Wlorentz_j = lorentz_factor(CellP[j].gr.gamma,VelPred_j, gr_limiter_j);
+                for(k=0;k<3;k++){FourVelocity_j[k] = Wlorentz_j*VelPred_j[k];}
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
+#ifdef GENERAL_RELATIVITY
+                MyDouble ParticleVel_j[3]; for(k=0;k<3;k++) {ParticleVel_j[k]=CellP[j].ParticleVel[k];} // set the com-element velocity of neighbor [GR: mesh-generating point velocity, 'Lupi fix 2022']
+#else
                 MyDouble ParticleVel_j[3]; for(k=0;k<3;k++) {ParticleVel_j[k]=CellP[j].VelPred[k];} // set the com-element velocity of neighbor
+#endif
                 NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,ParticleVel_j,-1); /* wrap velocities for shearing boxes if needed */
+#ifdef GENERAL_RELATIVITY
+                Vphys(ParticleVel_j,CellP[j].gr.beta,CellP[j].gr.alpha);
+#endif
 #endif
                 kernel.dv[0] = local.Vel[0] - VelPred_j[0];
                 kernel.dv[1] = local.Vel[1] - VelPred_j[1];
@@ -200,9 +241,34 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 double BPred_j[3];
                 for(k=0;k<3;k++) {BPred_j[k]=Get_Gas_BField(j,k);} /* defined j b-field in appropriate units for everything */
                 NGB_SHEARBOX_BOUNDARY_BCORR_(local.Pos,P[j].Pos,BPred_j,-1); /* in a shearing box, wrap magnetic fields for shearing boxes if needed [literally does nothing if not shearing box here] */
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
                 double PhiPred_j = Get_Gas_PhiField(j); /* define j phi-field in appropriate units */
 #endif
+#ifdef GENERAL_RELATIVITY
+                double BPrim_j[3],BRest_j[5];
+                for(k=0;k<3;k++) {BPrim_j[k]=BPred_j[k]/CellP[j].gr.gdet;} //Determine primitive B
+                BRest_j[4]=Get_Gas_BField_RestFrame(j,BPrim_j,VelPred_j,BRest_j);
+                kernel.b2_j = BRest_j[4];
+                double hstar_j = gr_get_primitive_density(CellP[j].Density,CellP[j].VelPred,&(CellP[j].gr), gr_limiter_j)*
+                                (1.+CellP[j].InternalEnergyPred) + CellP[j].Pressure + kernel.b2_j;
+                kernel.alfven2_j = kernel.b2_j / hstar_j;
+                double vcsa2_j = kernel.sound_j*kernel.sound_j*(1-kernel.alfven2_j)+kernel.alfven2_j;
+                kernel.vsig = sqrt(vcsa2_i)+sqrt(vcsa2_j);
+                double magneticspeed_i=sqrt(vcsa2_i);
+                double magneticspeed_j=sqrt(vcsa2_j);
+#ifdef DIVBCLEANING_GR
+                /* Route B cleaning speeds: local value on each side (boosted magnetosonic speed, Fedrigo & Lupi 2025); at the face the max over the pair */
+                double c_h_i = gr_cleaning_speed(magneticspeed_i);
+                double c_h_j = gr_cleaning_speed(magneticspeed_j);
+                double c_h_ij = DMAX(c_h_i, c_h_j);
+#ifdef GR_CLEANING_LEGACY
+                /* old relativistic boost of the fluid signal velocity (pre-Route-B time-step criterion) */
+                double v_tmp = kernel.vsig;
+                kernel.vsig += VEL_CLEANING*v_tmp;
+                kernel.vsig /= (1. + 0.25*VEL_CLEANING*v_tmp*v_tmp);
+#endif
+#endif
+#else
                 kernel.b2_j = BPred_j[0]*BPred_j[0] + BPred_j[1]*BPred_j[1] + BPred_j[2]*BPred_j[2];
                 kernel.alfven2_j = kernel.b2_j * fac_magnetic_pressure / CellP[j].Density;
                 kernel.alfven2_j = DMIN(kernel.alfven2_j, 1000. * kernel.sound_j*kernel.sound_j);
@@ -217,10 +283,34 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                         4 * kernel.sound_i*kernel.sound_i * Bpro2_i*fac_magnetic_pressure/local.Density), 0))));
                 kernel.vsig = magneticspeed_i + magneticspeed_j;
                 Bpro2_i /= kernel.b2_i; Bpro2_j /= kernel.b2_j;
+#endif //GENERAL_RELATIVITY
 #endif
                 kernel.vdotr2 = kernel.dp[0] * kernel.dv[0] + kernel.dp[1] * kernel.dv[1] + kernel.dp[2] * kernel.dv[2];
+#ifdef GENERAL_RELATIVITY
+                /* relativistic composition of the approach velocity */
+                double vstar_i = (kernel.dp[0] * local.Vel[0] + kernel.dp[1] * local.Vel[1] + kernel.dp[2] * local.Vel[2])*rinv;
+                double vstar_j = (kernel.dp[0] * VelPred_j[0] + kernel.dp[1] * VelPred_j[1] + kernel.dp[2] * VelPred_j[2])*rinv;
+                kernel.vdotr2 *= 1./(1. - vstar_i*vstar_j);
+#endif
                 // hubble-flow correction: need in -code- units, hence extra a2 appearing here //
                 if(All.ComovingIntegrationOn) {kernel.vdotr2 += All.cf_hubble_a2 * r2;}
+#ifdef GENERAL_RELATIVITY
+#if defined(HYDRO_MESHLESS_FINITE_VOLUME)
+                double fac_appvel = 6;
+#else
+                double fac_appvel = 2;
+#endif
+                kernel.vsig += fac_appvel * fac_mu * fabs(kernel.vdotr2) * rinv;
+#ifdef MAGNETIC
+                //In this case, max wave velocity (normally saved in magneticspeed_i,j) for each particle is 1
+                kernel.vsig /= (1. + 0.25*(magneticspeed_i + magneticspeed_j)*fabs(kernel.vdotr2)*rinv);
+#if defined(DIVBCLEANING_GR) && !defined(GR_CLEANING_LEGACY)
+                if(2.*c_h_ij > kernel.vsig) {kernel.vsig = 2.*c_h_ij;} /* the cleaning wave (speed c_h on each side) must be resolved by the Courant condition */
+#endif
+#else
+                kernel.vsig /= (1. + 0.25*(kernel.sound_i + kernel.sound_j)*fabs(kernel.vdotr2)*rinv);
+#endif
+#else //GENERAL_RELATIVITY
                 if(kernel.vdotr2 < 0)
                 {
 #if defined(HYDRO_SPH) || defined(HYDRO_MESHLESS_FINITE_VOLUME)
@@ -229,6 +319,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                     kernel.vsig -= fac_mu * kernel.vdotr2 * rinv;
 #endif
                 }
+#endif //GENERAL_RELATIVITY
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
                 double KE = kernel.dv[0]*kernel.dv[0] + kernel.dv[1]*kernel.dv[1] + kernel.dv[2]*kernel.dv[2];
                 if(KE > out.MaxKineticEnergyNgb) {out.MaxKineticEnergyNgb = KE;}
@@ -394,15 +485,33 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #ifndef FREEZE_HYDRO
                 for(k=0;k<3;k++) {out.DtB[k] += FluxCorrectionFactor_to_i * Fluxes.B[k];}
                 out.divB += Fluxes.B_normal_corrected;
-#if defined(DIVBCLEANING_DEDNER) && defined(HYDRO_MESHLESS_FINITE_VOLUME) // mass-based phi-flux
+#if (defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)) && defined(HYDRO_MESHLESS_FINITE_VOLUME) // mass-based phi-flux
                 out.DtPhi += FluxCorrectionFactor_to_i * Fluxes.phi;
+#endif
+#if defined(GENERAL_RELATIVITY) && defined(HYDRO_MESHLESS_FINITE_VOLUME) && defined(GR_ENTROPY_SWITCH)
+                out.DtEntropy += FluxCorrectionFactor_to_i * Fluxes.Entropy;
 #endif
 #ifdef HYDRO_SPH
                 for(k=0;k<3;k++) {out.DtInternalEnergy += FluxCorrectionFactor_to_i * magfluxv[k]*local.Vel[k]/All.cf_atime;}
                 out.DtInternalEnergy += FluxCorrectionFactor_to_i * resistivity_heatflux;
 #else
                 double wt_face_sum = Face_Area_Norm * (-face_area_dot_vel+face_vel_i);
+#ifndef GENERAL_RELATIVITY
                 out.DtInternalEnergy += FluxCorrectionFactor_to_i * 0.5 * kernel.b2_i*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
+#else
+#ifdef HYDRO_MESHLESS_FINITE_MASS
+                wt_face_sum = Face_Area_Norm * (-Riemann_out.S_M+face_vel_i);
+#endif
+                //We evaluate here the volume variation as obtained in the Riemann Problems.
+                //This quantity will be used in the kick and in the predict to estimate the new volume that multiplies the kicked/predicted conservatives.
+                out.DtVolume += FluxCorrectionFactor_to_i * wt_face_sum;
+#endif //GENERAL_RELATIVITY
+#ifdef DIVBCLEANING_GR
+                for(k=0;k<3;k++) {
+                    out.DtB_PhiCorr[k] += FluxCorrectionFactor_to_i * Riemann_out.phi_normal_db * Face_Area_Vec[k];
+                    out.MeanPhi_PhiCorr[k] += FluxCorrectionFactor_to_i * Riemann_out.phi_normal_mean * Face_Area_Vec[k];
+                }
+#endif
 #ifdef DIVBCLEANING_DEDNER
                 for(k=0; k<3; k++)
                 {

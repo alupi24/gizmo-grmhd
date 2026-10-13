@@ -91,6 +91,17 @@ void allocate_memory(void)
 #endif
     }
 
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC==2)
+    if(!(grP = (struct gr_particle_data *) mymalloc("grP", bytes = 2 * sizeof(struct gr_particle_data))))
+        {
+          printf("failed to allocate memory for `grP' (%g MB).\n", bytes / (1024.0 * 1024.0));
+          endrun(1);
+        }
+      bytes_tot += bytes;
+      if(ThisTask == 0)
+        printf("Allocated %g MByte for GR particle storage.\n", bytes_tot / (1024.0 * 1024.0));
+#endif
+
 
 
 

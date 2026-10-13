@@ -299,6 +299,23 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                 }
             break;
 
+#ifdef GENERAL_RELATIVITY
+        case IO_RHO0:		/* rest-mass (primitive) density for GR */
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    int gr_limiter=0;
+                    double dpl[3]; for(k=0;k<3;k++) {dpl[k]=P[pindex].Pos[k];}
+#if (GR_METRIC==2)
+                    for(k=0;k<3;k++) {dpl[k] = -P[pindex].Min_xyz_to_Sink[k];}
+#endif
+                    if(dpl[0]*dpl[0]+dpl[1]*dpl[1]+dpl[2]*dpl[2] <= pow(GAMMA_LIMITER_RADIUS,2)) gr_limiter=1;
+                    *fp++ = (MyOutputFloat) gr_get_primitive_density(CellP[pindex].Density,P[pindex].Vel,&(CellP[pindex].gr), gr_limiter);
+                    n++;
+                }
+            break;
+#endif
+
         case IO_NE:		/* electron abundance */
 #if (defined(COOLING) || defined(RT_CHEM_PHOTOION)) && !defined(CHIMES)
             for(n = 0; n < pc; pindex++)
@@ -1074,7 +1091,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
 
         case IO_PHI:		/* divBcleaning fuction of particle  */
-#if defined(DIVBCLEANING_DEDNER) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
+#if (defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -1085,7 +1102,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
 
         case IO_GRADPHI:		/* divBcleaning fuction of particle  */
-#if defined(DIVBCLEANING_DEDNER) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
+#if (defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -1788,6 +1805,21 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
         break;
 
+#ifdef GENERAL_RELATIVITY
+        case IO_METRIC:
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    double gcov_tmp[10]; get_covariant_metric(P[pindex].Pos,gcov_tmp);
+                    for(k=0;k<10;k++) {fp[k] = (MyOutputFloat) gcov_tmp[k];}
+                    fp[10]=CellP[pindex].gr.alpha;
+                    fp[11]=CellP[pindex].gr.gdet;
+                    fp+=12;
+                    n++;
+                }
+            break;
+#endif
+
         case IO_LASTENTRY:
             endrun(213);
             break;
@@ -1858,6 +1890,9 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_SINK_DIST:
         case IO_U:
         case IO_RHO:
+#ifdef GENERAL_RELATIVITY
+        case IO_RHO0:
+#endif
         case IO_NE:
         case IO_NH:
         case IO_HII:
@@ -2119,6 +2154,15 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
                 bytes_per_blockelement = 9 * sizeof(MyOutputFloat);
             break;
 
+#ifdef GENERAL_RELATIVITY
+        case IO_METRIC:
+            if(mode)
+                bytes_per_blockelement = 12 * sizeof(MyInputFloat);
+            else
+                bytes_per_blockelement = 12 * sizeof(MyOutputFloat);
+            break;
+#endif
+
         case IO_LASTENTRY:
             endrun(214);
             break;
@@ -2196,6 +2240,9 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_SINK_DIST:
         case IO_U:
         case IO_RHO:
+#ifdef GENERAL_RELATIVITY
+        case IO_RHO0:
+#endif
         case IO_NE:
         case IO_NH:
         case IO_HII:
@@ -2403,6 +2450,12 @@ int get_values_per_blockelement(enum iofields blocknr)
             values = 9;
             break;
 
+#ifdef GENERAL_RELATIVITY
+        case IO_METRIC:
+            values = 12;
+            break;
+#endif
+
         case IO_LASTENTRY:
             endrun(215);
             break;
@@ -2488,6 +2541,10 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_EDDINGTON_TENSOR:
         case IO_U:
         case IO_RHO:
+#ifdef GENERAL_RELATIVITY
+        case IO_RHO0:
+        case IO_METRIC:
+#endif
         case IO_NE:
         case IO_NH:
         case IO_HII:
@@ -3021,7 +3078,7 @@ int blockpresent(enum iofields blocknr)
 
         case IO_PHI:
         case IO_GRADPHI:
-#if defined(DIVBCLEANING_DEDNER) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
+#if (defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
             return 1;
 #endif
             break;
@@ -3277,6 +3334,13 @@ int blockpresent(enum iofields blocknr)
 #endif
             break;
 
+#ifdef GENERAL_RELATIVITY
+        case IO_METRIC:
+        case IO_RHO0:
+            return 1;
+            break;
+#endif
+
         case IO_LASTENTRY: /* will not occur */
             break;
     }
@@ -3323,6 +3387,11 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_RHO:
             strncpy(label, "RHO ", 4);
             break;
+#ifdef GENERAL_RELATIVITY
+        case IO_RHO0:
+            strncpy(label, "RHO0", 4);
+            break;
+#endif
         case IO_NE:
             strncpy(label, "NE  ", 4);
             break;
@@ -3693,6 +3762,12 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
             strncpy(label, "derd", 4);
             break;
 
+#ifdef GENERAL_RELATIVITY
+        case IO_METRIC:
+            strncpy(label, "gcov", 4);
+            break;
+#endif
+
         case IO_LASTENTRY:
             endrun(217);
             break;
@@ -3735,6 +3810,11 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_RHO:
             strcpy(buf, "Density");
             break;
+#ifdef GENERAL_RELATIVITY
+        case IO_RHO0:
+            strcpy(buf, "RestMassDensity");
+            break;
+#endif
         case IO_NE:
             strcpy(buf, "ElectronAbundance");
             break;
@@ -4104,6 +4184,11 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_DYNERRORDEFAULT:
             strcpy(buf, "DynamicErrorDefault");
             break;
+#ifdef GENERAL_RELATIVITY
+        case IO_METRIC:
+            strcpy(buf, "GRMetricTensor");
+            break;
+#endif
         case IO_LASTENTRY:
             endrun(218);
             break;

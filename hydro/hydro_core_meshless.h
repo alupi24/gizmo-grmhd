@@ -49,7 +49,7 @@
     if(Face_Area_Norm == 0)
     {
         memset(&Fluxes, 0, sizeof(struct Conserved_var_Riemann));
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
         Riemann_out.phi_normal_mean=Riemann_out.phi_normal_db=0;
 #endif
     } else {
@@ -74,7 +74,11 @@
          particle with the smaller smoothing length; so it's values are slightly up-weighted */
         
         /* we need the face velocities, dotted into the face vector, for correction back to the lab frame */
+#ifdef GENERAL_RELATIVITY
+        for(k=0;k<3;k++) {face_vel_i+=local.VelCoord[k]*n_unit[k]; face_vel_j+=VelCoord_j[k]*n_unit[k];} /* GR: coordinate (dx/dt) velocities of the mesh-generating points */
+#else
         for(k=0;k<3;k++) {face_vel_i+=local.Vel[k]*n_unit[k]; face_vel_j+=VelPred_j[k]*n_unit[k];}
+#endif
         face_vel_i /= All.cf_atime; face_vel_j /= All.cf_atime;
         face_area_dot_vel = rinv*(-s_i*face_vel_j + s_j*face_vel_i);
         
@@ -96,13 +100,29 @@
         if(leak_vs_tol > 1) {recon_mode = 0;}
         
         double rho_i=local.Density, rho_j=CellP[j].Density, P_i=Pressure_i, P_j=Pressure_j; // initialize for below
+#ifdef GENERAL_RELATIVITY //For GR we need the primitive (rest-mass) density
+        int gr_limiter=0;
+        double dpl[3]; for(k=0;k<3;k++) {dpl[k]=P[j].Pos[k];}
+#if (GR_METRIC==2)
+        for(k=0;k<3;k++) {dpl[k] = -P[j].Min_xyz_to_Sink[k];}
+#endif
+        if(dpl[0]*dpl[0]+dpl[1]*dpl[1]+dpl[2]*dpl[2] <= pow(GAMMA_LIMITER_RADIUS,2)) gr_limiter=1;
+        rho_i = local.RestMassDensity; rho_j=gr_get_primitive_density(CellP[j].Density,CellP[j].VelPred,&(CellP[j].gr), gr_limiter);
+#else
+        int gr_limiter=0; /* dummy argument for the (Newtonian) Riemann solver */
+#endif
 #if defined(HYDRO_FACE_VOLUME_RECONSTRUCTION_CORRECTION)
         if(Vi_inv_corr*Vj_inv_corr < 0.999) {recon_mode = 0;} // if this correction is needed, reconstruction is unsafe, must revert to lower-order
         rho_i*=Vi_inv_corr; P_i*=Vi_inv_corr; rho_j*=Vj_inv_corr; P_j*=Vj_inv_corr; // do scalar correction
 #endif
 
+#ifdef GENERAL_RELATIVITY
+        reconstruct_face_states(rho_i, local.Gradients.RestMassDensity, rho_j, CellP[j].Gradients.RestMassDensity,
+                                distance_from_i, distance_from_j, &Riemann_vec.L.rho, &Riemann_vec.R.rho, recon_mode);
+#else
         reconstruct_face_states(rho_i, local.Gradients.Density, rho_j, CellP[j].Gradients.Density,
                                 distance_from_i, distance_from_j, &Riemann_vec.L.rho, &Riemann_vec.R.rho, recon_mode);
+#endif
         reconstruct_face_states(P_i, local.Gradients.Pressure, P_j, CellP[j].Gradients.Pressure,
                                 distance_from_i, distance_from_j, &Riemann_vec.L.p, &Riemann_vec.R.p, recon_mode);
 #ifdef EOS_GENERAL
@@ -113,9 +133,16 @@
 #endif
         for(k=0;k<3;k++)
         {
+#ifdef GENERAL_RELATIVITY
+            /* GR: reconstruct the spatial part of the four-velocity (W*v), and solve the Riemann problem in the lab frame, passing the face velocity separately */
+            reconstruct_face_states(local.FourVelocity[k], local.Gradients.Velocity[k], FourVelocity_j[k], CellP[j].Gradients.Velocity[k],
+                                    distance_from_i, distance_from_j, &Riemann_vec.L.v[k], &Riemann_vec.R.v[k], recon_mode);
+            Riemann_vec.v_frame[k] = v_frame[k];
+#else
             reconstruct_face_states(local.Vel[k], local.Gradients.Velocity[k], VelPred_j[k], CellP[j].Gradients.Velocity[k],
                                     distance_from_i, distance_from_j, &Riemann_vec.L.v[k], &Riemann_vec.R.v[k], recon_mode);
             Riemann_vec.L.v[k] -= v_frame[k]; Riemann_vec.R.v[k] -= v_frame[k];
+#endif
         }
 #ifdef MAGNETIC
         int slim_mode = 1;
@@ -124,14 +151,62 @@
 #endif
         for(k=0;k<3;k++)
         {
+#ifdef GENERAL_RELATIVITY
+            reconstruct_face_states(local.BPred[k], local.Gradients.B[k], BPred_j[k]/CellP[j].gr.gdet, CellP[j].Gradients.B[k],
+                                    distance_from_i, distance_from_j, &Riemann_vec.L.B[k], &Riemann_vec.R.B[k], slim_mode);
+#else
             reconstruct_face_states(local.BPred[k], local.Gradients.B[k], BPred_j[k], CellP[j].Gradients.B[k],
                                     distance_from_i, distance_from_j, &Riemann_vec.L.B[k], &Riemann_vec.R.B[k], slim_mode);
+#endif
         }
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
         reconstruct_face_states(local.PhiPred, local.Gradients.Phi, PhiPred_j, CellP[j].Gradients.Phi,
                                 distance_from_i, distance_from_j, &Riemann_vec.L.phi, &Riemann_vec.R.phi, 2);
+#ifdef DIVBCLEANING_GR
+        /* Route B: the solver works with Dedner's psi = c_h*psihat, with each side's own cleaning speed; the face value c_h_ij enters the Rusanov jump terms.
+           The reconstructed psihat itself is kept for the mass-based advection flux below (psihat is the quantity carried per unit mass) */
+        double phihat_L = Riemann_vec.L.phi, phihat_R = Riemann_vec.R.phi;
+        Riemann_vec.L.phi *= c_h_j; Riemann_vec.R.phi *= c_h_i; Riemann_vec.c_h = c_h_ij;
 #endif
 #endif
+#endif
+
+#ifdef GENERAL_RELATIVITY
+        /* metric at the face position */
+        double xface[]={P[j].Pos[0]+distance_from_j[0],P[j].Pos[1]+distance_from_j[1],P[j].Pos[2]+distance_from_j[2]};
+#ifdef BOX_PERIODIC
+        if(xface[0]>boxSize_X) xface[0]-=boxSize_X; else if(xface[0]<0) xface[0]+=boxSize_X;
+        if(xface[1]>boxSize_Y) xface[1]-=boxSize_Y; else if(xface[1]<0) xface[1]+=boxSize_Y;
+        if(xface[2]>boxSize_Z) xface[2]-=boxSize_Z; else if(xface[2]<0) xface[2]+=boxSize_Z;
+#endif
+        set_metric_coefficients(xface,P[j].Potential,&(Riemann_vec.gr));
+        if(Riemann_vec.gr.alpha<1e-3 || isnan(Riemann_vec.gr.alpha)) //This occurs in the binary metric if we are too close to one of the BHs - in this case we use the j-th values of the metric
+            set_metric_coefficients(P[j].Pos,P[j].Potential,&(Riemann_vec.gr));
+        /* convert the reconstructed four-velocities back to three-velocities with the face metric */
+        double WfaceL=sqrt(1+vector_sqnorm(Riemann_vec.gr.gamma,Riemann_vec.L.v));
+        double WfaceR=sqrt(1+vector_sqnorm(Riemann_vec.gr.gamma,Riemann_vec.R.v));
+        for(k=0;k<3;k++){
+            Riemann_vec.L.v[k] /= WfaceL;
+            Riemann_vec.R.v[k] /= WfaceR;
+        }
+        //Compute reconstructed velocity magnitude (in case unphysical values are found, revert to constant-states for stability)
+        double v_check=(double)vector_sqnorm(Riemann_vec.gr.gamma,Riemann_vec.L.v);
+        v_check=DMAX(v_check,(double)vector_sqnorm(Riemann_vec.gr.gamma,Riemann_vec.R.v));
+
+        if(gr_limiter==1){ /* these calls limit the velocities in place to the maximum allowed Lorentz factor */
+            lorentz_factor(Riemann_vec.gr.gamma,Riemann_vec.L.v, gr_limiter);
+            lorentz_factor(Riemann_vec.gr.gamma,Riemann_vec.R.v, gr_limiter);
+            lorentz_factor(Riemann_vec.gr.gamma,Riemann_vec.v_frame, gr_limiter);}
+#endif //GENERAL_RELATIVITY
+
+#ifdef GENERAL_RELATIVITY
+        double press_tot_limiter = MAX_REAL_NUMBER;
+        double v_lim=1.-MIN_REAL_NUMBER;
+        if(gr_limiter==1)
+            v_lim=1-1./GR_GAMMA_LIMITER;
+        if(v_check>=v_lim) press_tot_limiter = 0.; //This forces the 1-st order reconstruction
+        if(local.ID==PARTICLE) {stamp=1;} /* debugging output for the particle with ID==PARTICLE (gr/gr.h) */
+#else
         /* estimate maximum upwind pressure */
         double press_i_tot = Pressure_i + local.Density * v2_approach;
         double press_j_tot = Pressure_j + CellP[j].Density * v2_approach;
@@ -155,50 +230,95 @@
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC)
         press_tot_limiter = 1.e10*(press_tot_limiter+1.); // it is unclear how this particular limiter behaves for solid-body EOS's, so for now, disable it in these cases
 #endif
+#endif //GENERAL_RELATIVITY
 
         
         /* --------------------------------------------------------------------------------- */
         /* Alright! Now we're actually ready to solve the Riemann problem at the particle interface */
         /* --------------------------------------------------------------------------------- */
-        Riemann_solver(Riemann_vec, &Riemann_out, n_unit, press_tot_limiter);
+        Riemann_solver(Riemann_vec, &Riemann_out, n_unit, press_tot_limiter, gr_limiter);
+#ifdef GENERAL_RELATIVITY
+        if(local.ID==PARTICLE) {stamp=0;}
+#endif
         /* before going on, check to make sure we have a valid Riemann solution */
         if((Riemann_out.P_M<0)||(isnan(Riemann_out.P_M))||(Riemann_out.P_M>1.4*press_tot_limiter))
         {
             /* go to a linear reconstruction of P, rho, and v, and re-try */
             Riemann_vec.R.p = Pressure_i; Riemann_vec.L.p = Pressure_j;
+#ifdef GENERAL_RELATIVITY
+            Riemann_vec.R.rho = rho_i; Riemann_vec.L.rho = rho_j;
+            for(k=0;k<3;k++) {Riemann_vec.R.v[k]=local.FourVelocity[k]; Riemann_vec.L.v[k]=FourVelocity_j[k];}
+            WfaceL=sqrt(1+vector_sqnorm(Riemann_vec.gr.gamma,Riemann_vec.L.v));
+            WfaceR=sqrt(1+vector_sqnorm(Riemann_vec.gr.gamma,Riemann_vec.R.v));
+            for(k=0;k<3;k++){
+               Riemann_vec.L.v[k] /= WfaceL;
+               Riemann_vec.R.v[k] /= WfaceR;
+            }
+#else
             Riemann_vec.R.rho = local.Density; Riemann_vec.L.rho = CellP[j].Density;
             for(k=0;k<3;k++) {Riemann_vec.R.v[k]=local.Vel[k]-v_frame[k]; Riemann_vec.L.v[k]=VelPred_j[k]-v_frame[k];}
+#endif
 #ifdef MAGNETIC
+#ifdef GENERAL_RELATIVITY
+            for(k=0;k<3;k++) {Riemann_vec.R.B[k]=local.BPred[k]; Riemann_vec.L.B[k]=BPred_j[k]/CellP[j].gr.gdet;}
+#else
             for(k=0;k<3;k++) {Riemann_vec.R.B[k]=local.BPred[k]; Riemann_vec.L.B[k]=BPred_j[k];}
-#ifdef DIVBCLEANING_DEDNER
+#endif
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
             Riemann_vec.R.phi = local.PhiPred; Riemann_vec.L.phi = PhiPred_j;
+#ifdef DIVBCLEANING_GR
+            phihat_R = local.PhiPred; phihat_L = PhiPred_j;
+            Riemann_vec.R.phi *= c_h_i; Riemann_vec.L.phi *= c_h_j; /* psi = c_h*psihat, as above */
+#endif
 #endif
 #endif
 #ifdef EOS_GENERAL
             Riemann_vec.R.u = local.InternalEnergyPred; Riemann_vec.L.u = CellP[j].InternalEnergyPred;
             Riemann_vec.R.cs = kernel.sound_i; Riemann_vec.L.cs = kernel.sound_j;
 #endif
-            Riemann_solver(Riemann_vec, &Riemann_out, n_unit, 1.4*press_tot_limiter);
+            Riemann_solver(Riemann_vec, &Riemann_out, n_unit, 1.4*press_tot_limiter, gr_limiter);
             if((Riemann_out.P_M<0)||(isnan(Riemann_out.P_M)))
             {
                 /* ignore any velocity difference between the particles: this should gaurantee we have a positive pressure! */
                 Riemann_vec.R.p = Pressure_i; Riemann_vec.L.p = Pressure_j;
+#ifdef GENERAL_RELATIVITY
+                Riemann_vec.R.rho = rho_i; Riemann_vec.L.rho = rho_j;
+                for(k=0;k<3;k++) {Riemann_vec.R.v[k]=Riemann_vec.v_frame[k]; Riemann_vec.L.v[k]=Riemann_vec.v_frame[k];}
+#else
                 Riemann_vec.R.rho = local.Density; Riemann_vec.L.rho = CellP[j].Density;
                 for(k=0;k<3;k++) {Riemann_vec.R.v[k]=0; Riemann_vec.L.v[k]=0;}
+#endif
 #ifdef MAGNETIC
+#ifdef GENERAL_RELATIVITY
+                for(k=0;k<3;k++) {Riemann_vec.R.B[k]=local.BPred[k]; Riemann_vec.L.B[k]=BPred_j[k]/CellP[j].gr.gdet;}
+#else
                 for(k=0;k<3;k++) {Riemann_vec.R.B[k]=local.BPred[k]; Riemann_vec.L.B[k]=BPred_j[k];}
-#ifdef DIVBCLEANING_DEDNER
+#endif
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
                 Riemann_vec.R.phi = local.PhiPred; Riemann_vec.L.phi = PhiPred_j;
+#ifdef DIVBCLEANING_GR
+                phihat_R = local.PhiPred; phihat_L = PhiPred_j;
+                Riemann_vec.R.phi *= c_h_i; Riemann_vec.L.phi *= c_h_j; /* psi = c_h*psihat, as above */
+#endif
 #endif
 #endif
 #ifdef EOS_GENERAL
                 Riemann_vec.R.u = local.InternalEnergyPred; Riemann_vec.L.u = CellP[j].InternalEnergyPred;
                 Riemann_vec.R.cs = kernel.sound_i; Riemann_vec.L.cs = kernel.sound_j;
 #endif
-                Riemann_solver(Riemann_vec, &Riemann_out, n_unit, 2.0*press_tot_limiter);
+                Riemann_solver(Riemann_vec, &Riemann_out, n_unit, 2.0*press_tot_limiter, gr_limiter);
                 if((Riemann_out.P_M<0)||(isnan(Riemann_out.P_M)))
                 {
-#if defined(MAGNETIC) && defined(DIVBCLEANING_DEDNER)
+#if defined(MAGNETIC) && defined(DIVBCLEANING_GR)
+                    printf("Riemann Solver Failed to Find Positive Pressure!: Pmax=%g PL/M/R=%g/%g/%g Mi/j=%g/%g rhoL/R=%g/%g H_ij=%g/%g vL=%g/%g/%g vR=%g/%g/%g n_unit=%g/%g/%g BL=%g/%g/%g BR=%g/%g/%g phiL/R=%g/%g \n Particle %llu \n",
+                           press_tot_limiter,Riemann_vec.L.p,Riemann_out.P_M,Riemann_vec.R.p,local.Mass,P[j].Mass,Riemann_vec.L.rho,Riemann_vec.R.rho,local.KernelRadius,P[j].KernelRadius,
+                           local.Vel[0]-v_frame[0],local.Vel[1]-v_frame[1],local.Vel[2]-v_frame[2],
+                           VelPred_j[0]-v_frame[0],VelPred_j[1]-v_frame[1],VelPred_j[2]-v_frame[2],
+                           n_unit[0],n_unit[1],n_unit[2],
+                           Riemann_vec.L.B[0],Riemann_vec.L.B[1],Riemann_vec.L.B[2],
+                           Riemann_vec.R.B[0],Riemann_vec.R.B[1],Riemann_vec.R.B[2],
+                           Riemann_vec.L.phi,Riemann_vec.R.phi, (unsigned long long) local.ID);
+#elif defined(MAGNETIC) && defined(DIVBCLEANING_DEDNER)
                     printf("Riemann Solver Failed to Find Positive Pressure!: Pmax=%g PL/M/R=%g/%g/%g Mi/j=%g/%g rhoL/R=%g/%g H_ij=%g/%g vL=%g/%g/%g vR=%g/%g/%g n_unit=%g/%g/%g BL=%g/%g/%g BR=%g/%g/%g phiL/R=%g/%g \n",
                            press_tot_limiter,Riemann_vec.L.p,Riemann_out.P_M,Riemann_vec.R.p,local.Mass,P[j].Mass,Riemann_vec.L.rho,Riemann_vec.R.rho,local.KernelRadius,P[j].KernelRadius,
                            local.Vel[0]-v_frame[0],local.Vel[1]-v_frame[1],local.Vel[2]-v_frame[2],
@@ -223,6 +343,7 @@
         /* --------------------------------------------------------------------------------- */
         if((Riemann_out.P_M>0)&&(!isnan(Riemann_out.P_M)))
         {
+#ifndef GENERAL_RELATIVITY /* the GR solvers already return the fluxes in the lab (simulation) frame */
             if(All.ComovingIntegrationOn) {for(k=0;k<3;k++) v_frame[k] /= All.cf_atime;} // correct units
 #ifdef TURB_DIFF_METALS
             mdot_estimated = Riemann_out.Mdot_estimated * Face_Area_Norm; // needed below
@@ -250,6 +371,7 @@
 #ifdef MAGNETIC
             for(k=0;k<3;k++) {Riemann_out.Fluxes.B[k] += -v_frame[k] * Riemann_out.B_normal_corrected;} /* v dotted into B along the normal to the face (careful of sign here) */
 #endif
+#endif //GENERAL_RELATIVITY
             
             /* ok now we can actually apply this to the EOM */
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME)
@@ -278,8 +400,17 @@
 #ifdef MAGNETIC
             for(k=0;k<3;k++) {Fluxes.B[k] = Face_Area_Norm * Riemann_out.Fluxes.B[k];} // magnetic flux (B*V) //
             Fluxes.B_normal_corrected = -Riemann_out.B_normal_corrected * Face_Area_Norm;
-#if defined(DIVBCLEANING_DEDNER) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
+#if (defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
             //Fluxes.phi = Riemann_out.Fluxes.phi * Face_Area_Norm; // after testing, we now prefer the mass-based fluxes, now //
+#ifdef DIVBCLEANING_GR
+            /* Route B: psihat (per unit mass) is what the mass flux advects; R.phi/L.phi now hold psi = c_h*psihat and must not be used here */
+            if(Fluxes.rho < 0)
+            {
+                Fluxes.phi = Fluxes.rho * phihat_R;
+            } else {
+                Fluxes.phi = Fluxes.rho * phihat_L;
+            }
+#else
             if(Fluxes.rho < 0)
             {
                 Fluxes.phi = Fluxes.rho * Riemann_vec.R.phi;
@@ -287,9 +418,31 @@
                 Fluxes.phi = Fluxes.rho * Riemann_vec.L.phi; // phi_ij, phi_L/R, or midpoint phi?
             }
 #endif
+#endif
 #endif // MAGNETIC
 
-#if defined(HYDRO_MESHLESS_FINITE_MASS) && (SLOPE_LIMITER_TOLERANCE < 2) && !(defined(EOS_TILLOTSON) || defined(EOS_ELASTIC)) // below is defined for adiabatic ideal fluids, don't use for materials
+#if defined(GENERAL_RELATIVITY) && defined(GR_ENTROPY_SWITCH)
+            if(out.EntropyCheck == 0){
+#ifdef HYDRO_MESHLESS_FINITE_MASS
+#ifdef MAGNETIC
+                double SMPhys = (Riemann_out.S_M+Riemann_vec.gr.beta[0])/Riemann_vec.gr.alpha;
+#else
+                double SMPhys = (Riemann_out.S_M+Riemann_vec.gr.beta[0]*n_unit[0]+Riemann_vec.gr.beta[1]*n_unit[1]+Riemann_vec.gr.beta[2]*n_unit[2])/Riemann_vec.gr.alpha;
+#endif
+#else
+                double SMPhys = face_area_dot_vel;
+#endif
+                if((SMPhys - Riemann_vec.v_frame[0])/(1-(SMPhys*Riemann_vec.v_frame[0]))/DMIN(kernel.sound_i,kernel.sound_j) > 1.5){
+                    out.EntropyCheck = 1;
+                }else{
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+                    Fluxes.Entropy = Fluxes.rho * 0.5*(Riemann_vec.R.p + Riemann_vec.L.p) /  pow(0.5*(Riemann_vec.R.rho + Riemann_vec.L.rho),EOS_GAMMA);
+#endif
+                }
+            }
+#endif
+
+#if defined(HYDRO_MESHLESS_FINITE_MASS) && (SLOPE_LIMITER_TOLERANCE < 2) && !(defined(EOS_TILLOTSON) || defined(EOS_ELASTIC)) && !defined(GENERAL_RELATIVITY) // below is defined for adiabatic ideal fluids, don't use for materials
             /* for MFM, do the face correction for adiabatic flows here */
             double SM_over_ceff = fabs(Riemann_out.S_M) / DMIN(kernel.sound_i,kernel.sound_j); // for now use sound speed here (more conservative) vs magnetosonic speed //
             /* if SM is sufficiently large, we do nothing to the equations */
@@ -372,7 +525,7 @@
         } else {
             /* nothing but bad riemann solutions found! */
             memset(&Fluxes, 0, sizeof(struct Conserved_var_Riemann));
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
             Riemann_out.phi_normal_mean=Riemann_out.phi_normal_db=0;
 #endif
         }

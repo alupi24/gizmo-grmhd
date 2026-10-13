@@ -49,6 +49,9 @@ int ngb_treefind_pairs_threads(MyDouble searchcenter[3], MyFloat rkern, int targ
 #include "../system/ngb_codeblock_before_condition.h"
     if(P[p].Type > 0) continue; // skip particles with non-gas types
     if(P[p].Mass <= 0) continue; // skip zero-mass particles
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC>0)
+    if(check_BH_intersection(searchcenter,rkern,p) == 1) continue; //skip if a BH is between the two particles
+#endif
 #define NGB_ONLY_OPEN_NODES_CONTAINING_GAS // only want gas
 #define SEARCHBOTHWAYS 1 // need neighbors that can -mutually- see one another, not just single-directional searching here
 #include "../system/ngb_codeblock_after_condition_threaded.h"
@@ -66,6 +69,9 @@ int ngb_treefind_variable_threads(MyDouble searchcenter[3], MyFloat rkern, int t
 #include "../system/ngb_codeblock_before_condition.h"
     if(P[p].Type > 0) continue; // skip particles with non-gas types
     if(P[p].Mass <= 0) continue; // skip zero-mass particles
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC>0)
+    if(check_BH_intersection(searchcenter,rkern,p) == 1) continue; //skip if a BH is between the two particles
+#endif
 #define NGB_ONLY_OPEN_NODES_CONTAINING_GAS // only want gas
 #define SEARCHBOTHWAYS 0 // only need neighbors inside of search radius, not particles 'looking at' primary
 #include "../system/ngb_codeblock_after_condition_threaded.h"
@@ -317,5 +323,56 @@ int ngb_treefind_fof_primary(MyDouble searchcenter[3], MyFloat rkern, int target
 
 
 
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC>0)
+/* returns 1 if a black hole (its excision region) lies between the search center (particle i, with search/kernel radius rkern) and particle p,
+   so that the two do not interact. The test is symmetric under i <-> p, so that the pair is either seen from both sides or from neither
+   (needed for conservation and for the closure of the faces): the pair is excluded if the point of the segment i-p closest to the black hole
+   lies inside the segment and its distance from the black hole is smaller than GR_EXCISION_RADIUS*r_H + R_c, where R_c is a size common to
+   both particles: the mean effective cell radius h/N_ngb^(1/NUMDIMS) of the two [for NUMDIMS=3 this is (3V/4pi)^(1/3) for a cell with the
+   desired neighbour number]. */
+static inline int segment_crosses_excised_BH(double dp[3], double normdp2, double dpBH[3], double Mass, double Spin[3], double R_common)
+{
+	/* dp = x_i - x_p, dpBH = x_i - x_BH; t = fractional position along the segment (from i to p) of the point closest to the BH */
+	int k; double proj=0, normdpBH2=0;
+	for(k=0;k<3;k++) {proj += dpBH[k]*dp[k]; normdpBH2 += dpBH[k]*dpBH[k];}
+	double t = proj/normdp2;
+	if(t <= 0 || t >= 1) {return 0;} /* closest point is one of the two particles themselves: these are outside the excised region, so the BH is not in between */
+	double perpBH2 = normdpBH2 - proj*proj/normdp2; /* squared distance of the BH from the segment */
+	double R_block = GR_EXCISION_RADIUS*EHradius(Mass,Spin) + R_common;
+	if(perpBH2 < R_block*R_block) {return 1;} //A BH is in the way
+	return 0;
+}
 
+int check_BH_intersection(MyDouble searchcenter[3], MyFloat rkern, int p)
+{
+	double dp[3],dpBH[3],normdp2=0,Spin[3];
+	int k=0;
+	for(k=0;k<3;k++) {dp[k] = searchcenter[k] - P[p].Pos[k];}
+	NEAREST_XYZ(dp[0],dp[1],dp[2],1); /* separation search center - particle p (periodic-wrapped) */
+	for(k=0;k<3;k++) {normdp2 += dp[k]*dp[k];}
+	if(normdp2 <= 0) {return 0;}
+	double R_common = 0.5*(rkern + P[p].KernelRadius) / pow(All.DesNumNgb, 1./NUMDIMS); /* common (symmetric) particle size */
 
+#if (GR_METRIC==2)
+	int kBH;
+	for(kBH=0;kBH<2;kBH++)
+	{
+		for(k=0;k<3;k++) {dpBH[k] = searchcenter[k] - grP[kBH].Pos[k]; Spin[k] = grP[kBH].Spin[k];}
+		NEAREST_XYZ(dpBH[0],dpBH[1],dpBH[2],1);
+		if(segment_crosses_excised_BH(dp,normdp2,dpBH,grP[kBH].Mass,Spin,R_common)) {return 1;}
+	}
+	return 0;
+#else
+	Spin[0] = 0.0;
+	Spin[1] = 0.0;
+	Spin[2] = All.MetricParams[1];
+	for(k=0;k<3;k++) {dpBH[k] = searchcenter[k];}
+#ifdef BOX_PERIODIC /* the black hole sits at the box centre */
+	dpBH[0] -= boxHalf_X;
+	dpBH[1] -= boxHalf_Y;
+	dpBH[2] -= boxHalf_Z;
+#endif
+	return segment_crosses_excised_BH(dp,normdp2,dpBH,All.MetricParams[0],Spin,R_common);
+#endif
+}
+#endif
