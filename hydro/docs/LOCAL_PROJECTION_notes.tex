@@ -1,0 +1,229 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs,array}
+\usepackage[hidelinks]{hyperref}
+\usepackage{microtype}
+\newcommand{\cB}{\mathcal{B}}
+\newcommand{\cD}{\mathcal{D}}
+\newcommand{\cS}{\mathcal{S}}
+\newcommand{\bA}{\bm{A}}
+\newcommand{\bD}{\bm{D}}
+\newcommand{\bx}{\bm{x}}
+\newcommand{\pd}{\partial}
+\newcommand{\sg}{\sqrt{\gamma}}
+\newcommand{\code}[1]{\texttt{#1}}
+\title{Localized divergence projection for meshless (GR)MHD in GIZMO:\\ equations and implementation plan}
+\author{Design notes, \code{divfree/} branch --- revision 2: Section~\ref{sec:impl} describes what is implemented}
+\date{12 October 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+The ``modified-gradient'' method of Tu, Wang, Gao \& Tang (2026, JCP; arXiv:2603.04077) makes the face-sum divergence of the MFM/MFV magnetic field vanish by adding, to the gradient used to reconstruct $\bm B$ from particle $i$ toward each face $ij$, a face-specific increment proportional to one scalar $c_i$ per particle. The constraints form a symmetric, sparse, weighted graph Laplacian system, which they solve directly (PARDISO) every step. These notes write out the scheme in GIZMO's own quantities, extend it to the densitized GR field, and define the cheaper solvers to be implemented: weighted Jacobi sweeps (Phase~1), a stencil-local dense solve over each particle's neighbours (Phase~2), and a global conjugate-gradient mode for validation (Phase~3). All variants leave the conserved variables and the evolution equations untouched; only the face states fed to the Riemann solver change.
+\end{abstract}
+
+\section{Notation}
+\begin{itemize}
+\item Particles $i$, neighbours $j\in N(i)$ (all $j$ with $r_{ij}<\max(h_i,h_j)$, as in the hydro loop). $V_i=m_i/\rho_i$ is the (coordinate) volume. $\Delta x_i$ is the particle size.
+\item Effective face vector $\bA_{ij}$ from \code{compute\_finitevol\_faces.h}; it is exactly antisymmetric, $\bA_{ji}=-\bA_{ij}$, because both the $i$- and the $j$-side terms change sign under $i\leftrightarrow j$. $A_{ij}=|\bA_{ij}|$, $\hat{\bm n}_{ij}=\bA_{ij}/A_{ij}$.
+\item Face point $\bx_{ij}=\tfrac12(\bx_i+\bx_j)$ (GIZMO uses $s^*_{ij}=0$); $\bD_{ij}=\bx_{ij}-\bx_i=\tfrac12(\bx_j-\bx_i)=-\bD_{ji}$. In the code $\bD_{ij}=-\tfrac12\,$\code{kernel.dp}.
+\item GR: the field that obeys a flat divergence constraint is the densitized one, $\cB^i=\sg\,B^i$ (stored as \code{BPred} before the division by \code{gdet}; \code{Get\_Gas\_BField} returns $\cB$). Everything below is written for $\cB$; in Newtonian runs $\cB=\bm B$. The Riemann solver receives $B=\cB/\sg_{\rm face}$.
+\item $G_i$ is the gradient tensor of $\cB$ at $i$, $(G_i)_{ab}=\pd_b\cB_a$ (\code{Gradients.B[a][b]}); $\mathcal{L}[\cdot]$ denotes the slope limiter of \code{reconstruct\_face\_states} (mode $-1$ constants when the constrained-gradient limiter set is used).
+\end{itemize}
+
+\section{Face reconstruction and the face-sum divergence}
+Standard reconstruction from $i$ toward face $ij$, and from $j$:
+\begin{equation}
+\cB'_i(ij)=\mathcal{L}\!\left[\cB_i+G_i\bD_{ij}\right],\qquad
+\cB'_j(ji)=\mathcal{L}\!\left[\cB_j+G_j\bD_{ji}\right].
+\label{eq:recon}
+\end{equation}
+The normal field used by the Riemann solver is $\bar\cB^\perp_{ij}=\tfrac12\big(\cB'_i+\cB'_j\big)\cdot\hat{\bm n}_{ij}$ (plus the Dedner correction of Route~B, applied afterwards), and the divergence accumulated by the hydro loop (\code{SphP.divB}, i.e.\ $V_i\,\nabla\!\cdot\!\cB_i$) is
+\begin{equation}
+\cD_i=\sum_{j\in N(i)}\tfrac12\big(\cB'_i(ij)+\cB'_j(ji)\big)\cdot\bA_{ij}.
+\label{eq:divsum}
+\end{equation}
+Because the face average is the same seen from $i$ and from $j$ while $\bA_{ji}=-\bA_{ij}$, every interior face contributes with opposite signs to $\cD_i$ and $\cD_j$, so $\sum_i\cD_i=0$ exactly for a closed domain.
+
+\section{Modified gradients (Tu et al.\ 2026) in GIZMO variables}
+For the reconstruction from $i$ toward face $ij$ only, replace $G_i$ by
+\begin{equation}
+G_i^{(ij)}=G_i+c_i\,Q_{ij},\qquad Q_{ij}=-\bD_{ij}\otimes\bA_{ij},\qquad Q_{ij}\bD_{ij}=-|\bD_{ij}|^2\bA_{ij},
+\label{eq:Q}
+\end{equation}
+with one scalar $c_i$ per particle. The increment of the reconstructed field at that face is parallel to the face normal and second order in the particle separation:
+\begin{equation}
+\delta\cB'_i(ij)=-c_i\,|\bD_{ij}|^2\bA_{ij},\qquad
+\delta\cB'_j(ji)=-c_j\,|\bD_{ji}|^2\bA_{ji}=+c_j\,|\bD_{ij}|^2\bA_{ij}.
+\label{eq:incr}
+\end{equation}
+The face-averaged normal flux changes by
+\begin{equation}
+\tfrac12\big(\delta\cB'_i+\delta\cB'_j\big)\cdot\bA_{ij}=-w_{ij}\,(c_i-c_j),\qquad
+\boxed{\,w_{ij}=\tfrac12\,|\bD_{ij}|^2A_{ij}^2=w_{ji}\,}
+\label{eq:w}
+\end{equation}
+and the constraint $\cD_i^{\rm MG}=0$ for every particle is the linear system
+\begin{equation}
+\boxed{\;\sum_{j\in N(i)}w_{ij}\,(c_i-c_j)=\cD_i\;}\qquad\Longleftrightarrow\qquad
+R\,\bm c=\bm\cD,\quad R_{ii}=W_i\equiv\sum_j w_{ij},\quad R_{ij}=-w_{ij}.
+\label{eq:system}
+\end{equation}
+$R$ is a weighted graph Laplacian: symmetric, positive semi-definite, with the constant vector as null space (only differences of $c$ enter), and the compatibility condition $\sum_i\cD_i=0$ holds by construction. This is the symmetric sparse system of Tu et al.\ ($R_{ii}=\sum_jQ_{ij}\!:\!Q_{ij}$, $R_{ij}=-Q_{ij}\!:\!Q_{ij}$, since $Q_{ij}\!:\!Q_{ij}=|\bD_{ij}|^2A_{ij}^2$). Equivalently, the scheme is a discrete Helmholtz projection, $\cB_{\rm face}\to\cB_{\rm face}-\nabla c$, with the Poisson equation solved on the particle graph and the correction written as a gradient modification so that it enters the reconstruction consistently. The correction is a discrete gradient, hence it carries no curl.
+
+\paragraph{Residual.} For any $\bm c$ define
+\begin{equation}
+r_i(\bm c)=\cD_i-\sum_jw_{ij}(c_i-c_j)=\cD_i^{\rm MG}(\bm c),
+\label{eq:res}
+\end{equation}
+which is exactly the face-sum divergence the hydro loop will measure once the modified faces are used (Section~\ref{sec:hydro}), provided both loops use the same faces, gradients and limiter. It replaces \code{divB} in the Powell terms and in the Route~B $\hat\psi$ source, and is the primary diagnostic.
+
+\section{Solvers}
+\subsection{Phase 1: weighted Jacobi sweeps (baseline)}
+With $\bm c$ carried over from the previous step (warm start; $c_i$ is a persistent particle variable), perform $K$ sweeps
+\begin{equation}
+\boxed{\;c_i\leftarrow c_i+\omega\,\frac{r_i(\bm c)}{W_i}\;},\qquad \omega\in(0,1],\ \text{default }\omega=\tfrac23,
+\label{eq:jacobi}
+\end{equation}
+all particles updated simultaneously from the current neighbour values. Each sweep is one pair loop (gradient type: kernel, faces, limited reconstructions, no Riemann solve). $W_i$ needs computing once per step. As a smoother on \eqref{eq:system}, weighted Jacobi damps the shortest wavelengths by a factor $\approx1-2\omega$ per sweep ($1/3$ for $\omega=2/3$) and a mode of wavelength $\lambda$ by $\approx1-\omega\,[1-\cos(2\pi\Delta x/\lambda)]$; after $K$ sweeps the divergence is removed for $\lambda\lesssim2\pi\Delta x\sqrt{K}$, while longer wavelengths are left to the hyperbolic cleaning of Route~B, which propagates and damps them. With $K\to\infty$ the sweeps converge to the exact solution of \eqref{eq:system} (the Laplacian is positive semi-definite and $\omega\le1$), which gives the regression check against the paper on static tests.
+
+\subsection{Phase 2: stencil-local solve (``matrix over the neighbours only'')}
+For each particle $i$ let $\cS_i=\{i\}\cup N(i)$ and hold $c_k$ fixed at the current value $c_k^{\rm old}$ for $k\notin\cS_i$. The rows of \eqref{eq:system} for $m\in\cS_i$ become the dense system
+\begin{equation}
+\boxed{\;W_m\,c_m-\sum_{k\in\cS_i,\,k\neq m}w_{mk}\,c_k=b_m,\qquad
+b_m=\cD_m+\sum_{k\notin\cS_i}w_{mk}\,c^{\rm old}_k=\cD_m+T_m-\sum_{k\in\cS_i,\,k\neq m}w_{mk}\,c^{\rm old}_k\;}
+\label{eq:local}
+\end{equation}
+with $T_m\equiv\sum_{k\in N(m)}w_{mk}c^{\rm old}_k$. Only $c_i$ is kept from the solution; every particle solves its own system. Properties:
+\begin{itemize}
+\item $R^{(i)}$ is symmetric; its rows are diagonally dominant, strictly so for every $m$ that has a neighbour outside $\cS_i$ (all of them except possibly $i$), so $R^{(i)}$ is positive definite and a Cholesky factorisation of size $|\cS_i|=N_{\rm ngb}+1$ suffices ($\sim\!N_{\rm ngb}^3/3$ flops, negligible).
+\item Inputs per neighbour $m$: $\cD_m$, $W_m$, $T_m$ (per-particle scalars from a preceding cheap pass, exported with the neighbour data), and the intra-stencil weights $w_{mk}$ for pairs of neighbours of $i$. The latter require the effective face between two neighbours,
+\begin{equation}
+\bA_{mk}=\Big[w(r_{mk};h_m)\,\tilde V_m\,{\rm NV\!\_T}_m+w(r_{mk};h_k)\,\tilde V_k\,{\rm NV\!\_T}_k\Big](\bx_m-\bx_k),
+\label{eq:facemk}
+\end{equation}
+evaluated with exactly the rule of \code{compute\_finitevol\_faces.h} (volume weights $\tilde V$, ill-conditioned fallback, face-area limiter), so that $w_{mk}$ is the same number $m$ and $k$ use in their own rows. This is $O(N_{\rm ngb}^2)$ kernel evaluations per particle and pass, roughly the cost of one hydro loop; both NV\_T matrices are available locally for every neighbour in the list.
+\item In linear-algebra terms this is one overlapping additive-Schwarz pass on \eqref{eq:system} with one subdomain per particle: errors up to the stencil scale ($\sim2h$) are removed in a single pass, which point Jacobi needs $\sim(2h/\Delta x)^2\approx10$--$30$ sweeps for. It is still a smoother, not an exact projection: after the pass $r_i\ne0$ because the neighbours' final $c_j$ come from their own solves. Under-relaxation $c_i\leftarrow c_i^{\rm old}+\omega_S(c_i^{\rm loc}-c_i^{\rm old})$ is available ($\omega_S=1$ default).
+\end{itemize}
+
+\paragraph{Phase 2b: star approximation (no neighbour--neighbour faces).} Dropping the couplings $w_{mk}$ with $m,k\ne i$, the neighbour rows give $c_j=c_j^{J}+(w_{ij}/W_j)(c_i-c_i^{\rm old})$ with the Jacobi value $c_j^{J}=(\cD_j+T_j)/W_j$, and the row of $i$ closes to the scalar equation
+\begin{equation}
+\Big(W_i-\sum_j\frac{w_{ij}^2}{W_j}\Big)c_i=\cD_i+\sum_jw_{ij}\,c_j^{J}-\sum_j\frac{w_{ij}^2}{W_j}\,c_i^{\rm old}.
+\label{eq:star}
+\end{equation}
+Two cheap passes per step, no $O(N_{\rm ngb}^2)$ work; expected to be worth about two or three Jacobi sweeps.
+
+\subsection{Phase 3: global conjugate gradient (exact mode)}
+$R$ is symmetric positive semi-definite and $\bm\cD$ is in its range, so plain conjugate gradient converges on \eqref{eq:system}. One iteration costs one pair loop for $R\bm p$ and two global dot products (\code{MPI\_Allreduce}); stop at $\|\bm r\|/\|\bm\cD\|<\varepsilon$. Preconditioners: diagonal ($1/W_i$) or the stencil solve of Phase~2 (additive Schwarz). This reproduces the round-off divergence of Tu et al.\ and can be used only at synchronisation steps, as in their adaptive variant.
+
+\section{Use of the correction in the hydro loop}\label{sec:hydro}
+After \code{reconstruct\_face\_states} (i.e.\ after the slope limiter) and before the division by the face $\sg$:
+\begin{equation}
+\boxed{\;\cB'_i(ij)\leftarrow\cB'_i(ij)-c_i\,|\bD_{ij}|^2\bA_{ij},\qquad
+\cB'_j(ji)\leftarrow\cB'_j(ji)+c_j\,|\bD_{ij}|^2\bA_{ij}\;},\qquad
+B_{R,L}=\cB'_{i,j}/\sg_{\rm face}.
+\label{eq:hydro}
+\end{equation}
+The Route~B $\hat\psi$ correction is applied on top, unchanged. Remarks:
+\begin{enumerate}
+\item Tu et al.\ apply the limiter after the modification and report that it can ``slightly re-violate'' the constraint. Here the increment is applied after the limiter so that the face sum targeted by the solver is exactly what the hydro loop uses; in exchange the increment is unlimited, hence the cap
+\begin{equation}
+|c_i|\le\kappa\,\frac{|\cB_i|}{\max_j\big(|\bD_{ij}|^2A_{ij}\big)},\qquad\kappa\simeq0.5,
+\label{eq:cap}
+\end{equation}
+applied after each update (a capped $c_i$ simply leaves a residual, which the hyperbolic cleaning sees).
+\item Consistency requirement: the gradient-loop residual \eqref{eq:res} must be built with the same faces, the same $G$, the same limiter mode and the same $\bD_{ij}$ as the hydro loop. This is the same requirement the constrained-gradient module already has, and the same scaffolding (\code{compute\_finitevol\_faces.h} included in \code{gradients.c}, the limiter copy there) is reused.
+\item The densitized $\cB$ must be the reconstructed quantity in both loops (gradients of $\cB$, \code{BPred} undivided by \code{gdet}), with the division by the face $\sg$ moved after the reconstruction; this is the same switch planned for the constrained-gradient port.
+\item Individual time steps: $\cD_i$, $W_i$, $T_i$ and $c_i$ are updated for active particles only; inactive particles keep $c_j$ and their last gradients, and enter their active neighbours' faces with those values.
+\item Energy: the conserved $\cB$ and its fluxes are unchanged in form; the correction only changes face states, so the scheme stays conservative and no new source terms appear (the paper's point). The $\tau$, $S_j$ chain-rule sources of the cleaning act on the residual, as now.
+\end{enumerate}
+
+\section{Diagnostics and acceptance tests}
+Per particle: $r_i$ (replaces \code{divB} in the Powell/$\hat\psi$ terms and is written to snapshots), $c_i$. Global per step: $\|\bm r\|/\|\bm\cD\|$ and the cost in pair loops.
+\begin{center}\small
+\begin{tabular}{>{\raggedright\arraybackslash}p{5.2cm}>{\raggedright\arraybackslash}p{4.6cm}>{\raggedright\arraybackslash}p{5.2cm}}
+\toprule
+Test & Measure & Expectation / pass criterion\\
+\midrule
+Static monopole (\code{testIC/MHD/IC\_monopole.hdf5}), no time evolution & $\|\bm r\|/\|\bm\cD\|$ versus $K$; Jacobi $K\to\infty$ and CG mode & monotone decrease; exact mode at round-off; stencil solve beats Jacobi at equal cost\\
+Field loop, Orszag--Tang, Balsara (\code{GR\_METRIC=0}) & $h|r|/|\cB|$ histograms, $E_B(t)$, loop shape & below the constrained-gradient result; no new oscillations\\
+Monopole advected with the flow (+ Route~B) & decay versus time & short wavelengths removed by the sweeps, long ones by cleaning\\
+Kerr--Schild Bondi and torus & stationarity, $h|r|/|\cB|$, cost & no degradation near the horizon; cost $\le$ budget\\
+\bottomrule
+\end{tabular}
+\end{center}
+Comparison set in every test: plain Route~B, Route~B + constrained gradient, Route~B + Jacobi ($K=1,2,3$), + stencil solve, + exact mode.
+
+\section{Original code mapping (superseded by Section~\ref{sec:impl})}
+\begin{center}\small
+\begin{tabular}{>{\raggedright\arraybackslash}p{3.4cm}>{\raggedright\arraybackslash}p{5.0cm}>{\raggedright\arraybackslash}p{6.6cm}}
+\toprule
+Item & Where & What\\
+\midrule
+flags & \code{Template\_Config.sh}, \code{allvars.h} & \code{MHD\_LOCAL\_PROJECTION=K} (Jacobi sweeps), \code{MHD\_LOCAL\_PROJECTION\_STENCIL} (Phase 2), \code{MHD\_LOCAL\_PROJECTION\_EXACT} (Phase 3); exclusive with \code{MHD\_CONSTRAINED\_GRADIENT}; forces the midpoint faces and the densitized $\cB$ path\\
+state & \code{allvars.h} (\code{SphP}) & \code{ProjPot} ($c_i$, persistent, in restart files), \code{ProjW} ($W_i$), \code{ProjT} ($T_i$), \code{ProjRes} ($r_i$)\\
+gradient loop & \code{hydro/gradients.c} & iteration 0: gradients, faces, $W_i$; iterations $1..K$: residual \eqref{eq:res} with current $c$, update \eqref{eq:jacobi} and cap \eqref{eq:cap}; exports $c_i$, $G_i$ (as the constrained-gradient module exports \code{BGrad})\\
+stencil solve & new \code{hydro/local\_projection.h} & pass computing \eqref{eq:facemk}, assembling \eqref{eq:local}, Cholesky, keep $c_i$\\
+hydro loop & \code{hydro/hydro\_core\_meshless.h} after the B reconstruction & \eqref{eq:hydro}; $c_j$ from \code{SphP[j]}, $c_i$ from \code{local}\\
+sources & \code{hydro/hydro\_toplevel.c} & \code{divB} accumulated by the hydro loop is already the residual; no change to the Route~B blocks\\
+I/O & \code{io.c}, \code{read\_ic.c} & output $c_i$ and $r_i$; $c_i$ read if present, else 0\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\clearpage
+\section{Revision 2: what is implemented (13 October 2026)}\label{sec:impl}
+The static tests of \code{scripts/projection\_tests/} (summary in \code{SUMMARY\_phase0.md}; all self-checks pass) changed three choices of Sections~3--7:
+\begin{enumerate}
+\item On irregular particle sets the face-sum divergence is dominated by the non-closure of the MFM/MFV faces, $\bm C_i=\sum_j\bA_{ij}\neq0$ ($|\bm C_i|/\sum_j|\bA_{ij}|\approx4\%$ on a glass, $19\%$ on a jittered lattice): a zeroth-order term that does not converge. It is removed geometrically, by closing the faces, before any projection.
+\item The weights of eq.~\eqref{eq:w} leave about half of a gradient error in the face states even when the divergence is zero; the two-point weights below remove $91$--$98\%$ of it.
+\item At equal cost, weighted Jacobi with $\omega\simeq1$ beats the stencil-local solve; the stencil solve and the traceless gradient are not implemented.
+\end{enumerate}
+
+\subsection{Closed faces (\code{HYDRO\_CLOSED\_FACES=}$K_C$)}
+With $\bA_{ij}$ the outward face of $i$ ($\bA_{ij}=-$\code{Face\_Area\_Vec} in GIZMO's convention) and a vector potential $\bm\lambda_i$ per particle,
+\begin{equation}
+\boxed{\;\tilde\bA_{ij}=\bA_{ij}-|\bA_{ij}|\,(\bm\lambda_i-\bm\lambda_j),\qquad \sum_j|\bA_{ij}|\,(\bm\lambda_i-\bm\lambda_j)=\bm C_i\;}
+\label{eq:closure}
+\end{equation}
+(three Laplacians with the same matrix; solvable because $\sum_i\bm C_i=0$). $\tilde\bA$ is antisymmetric, so conservation is unchanged, and $\sum_j\tilde\bA_{ij}=0$ at convergence. The weight $|\bA_{ij}|$ is required: with unit weights, small faces flip orientation. Jacobi sweeps with the residual measured on the corrected faces,
+\begin{equation}
+\bm\lambda_i\leftarrow\bm\lambda_i+\frac{\sum_j\tilde\bA_{ij}(\bm\lambda)}{\sum_j|\bA_{ij}|},
+\end{equation}
+reduce the closure error $10\times$ in 2 sweeps and $100\times$ in 5 from a cold start (the error is particle-scale noise); $\bm\lambda$ is kept between steps (warm start). The corrected faces are used by \emph{every} flux, hydrodynamic ones included.
+
+\subsection{Projection with two-point weights (\code{MHD\_LOCAL\_PROJECTION=}$K_P$)}
+With $\hat{\bm n}_{ij}=-\tilde\bA_{ij}/|\tilde\bA_{ij}|$ (pointing from $j$ to $i$, GIZMO's \code{n\_unit}) and $c_i$ a scalar per particle, the limited, densitized face states of the hydro loop get
+\begin{equation}
+\boxed{\;\cB'_i(ij)\leftarrow\cB'_i(ij)+\frac{2c_i}{r_{ij}}\hat{\bm n}_{ij},\qquad \cB'_j(ji)\leftarrow\cB'_j(ji)-\frac{2c_j}{r_{ij}}\hat{\bm n}_{ij}\;}
+\label{eq:tpfa}
+\end{equation}
+so that the outward face flux of $i$ changes by $-(|\tilde\bA_{ij}|/r_{ij})(c_i-c_j)$: a consistent two-point Laplacian with $w_{ij}=|\tilde\bA_{ij}|/r_{ij}$ in place of eq.~\eqref{eq:w}. Jacobi sweeps
+\begin{equation}
+c_i\leftarrow c_i+\omega\,\frac{\cD_i(\bm c)}{\sum_j|\tilde\bA_{ij}|/r_{ij}},\qquad\omega=1,
+\end{equation}
+where $\cD_i(\bm c)$ is the face-sum divergence of the corrected states, recomputed exactly as the hydro loop computes it (same faces, same \code{reconstruct\_face\_states}, mode 1, at the midpoint). $c_i$ is kept between steps. The field is reconstructed densitized ($\cB=\sg B$) and divided by $\sg$ at the face before the Riemann solver, so the constraint is the flat divergence and no metric enters the sweeps.
+
+\subsection{Schedule inside the gradient loop}
+With $N=\max(K_C,K_P)+1$ gradient iterations when the projection is on ($N=\max(K_C,1)$ otherwise): every iteration evaluates the faces with the current $\bm\lambda$; from the second iteration on it also evaluates $\cD_i(\bm c)$ (the limited $B$ gradients are built and limited right after the first iteration, with the same code as the final operations). After iteration $it$: $\bm\lambda$ is updated if $it<K_C$ and, with the projection on, $it<N-1$ (the faces must not change after the last projection residual); $c$ is updated if $it\ge N-K_P$. Defaults $K_C=K_P=2$, i.e.\ three gradient iterations per step.
+
+\subsection{Code map (implemented)}
+\begin{center}\small
+\begin{tabular}{>{\raggedright\arraybackslash}p{3.6cm}>{\raggedright\arraybackslash}p{10.8cm}}
+\toprule
+File & Change\\
+\midrule
+\code{allvars.h} & flags and defaults, compatibility checks; \code{SphP.ClosurePot[3]}, \code{SphP.ProjPot}\\
+\code{hydro/compute\_finitevol\_faces.h} & closure correction applied last (after the RSPH fallback and the face-area limiter), eq.~\eqref{eq:closure}\\
+\code{hydro/face\_reconstruction.h} & \code{reconstruct\_face\_states} moved from \code{reimann.h} verbatim (\code{static inline}), shared by both loops\\
+\code{hydro/gradients.c} & iteration count; faces evaluated every iteration; closure and projection residuals; Jacobi updates between iterations; $B$ gradient built and limited after iteration 0; densitized $B$\\
+\code{hydro/hydro\_core\_meshless.h} & densitized reconstruction, increments of eq.~\eqref{eq:tpfa}, division by the face $\sg$, fallback states\\
+\code{hydro/hydro\_toplevel.c}, \code{init.c}, \code{Template\_Config.sh} & exported fields, initialisation, documentation\\
+\bottomrule
+\end{tabular}
+\end{center}
+Not implemented: I/O of $\bm\lambda$ and $c$ (the face-sum divergence after the projection is already written as \code{divB}); a cap on the increments; the stencil-local and exact solvers.
+
+\end{document}

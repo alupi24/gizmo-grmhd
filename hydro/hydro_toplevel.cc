@@ -235,6 +235,9 @@ struct INPUT_STRUCT_NAME
 #endif
     } Gradients;
     MyDouble NV_T[3][3];
+#ifdef HYDRO_CLOSED_FACES
+    MyDouble ClosurePot[3];          /*!< face-closure potential (exact closure of the effective faces) */
+#endif
     
 #if defined(KERNEL_CRK_FACES)
     MyFloat Tensor_CRK_Face_Corrections[16];
@@ -495,6 +498,9 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
     
     int j;
     for(j=0;j<3;j++) {for(k=0;k<3;k++) {in->NV_T[j][k] = CellP[i].NV_T[j][k];}}
+#ifdef HYDRO_CLOSED_FACES
+    for(k=0;k<3;k++) {in->ClosurePot[k] = CellP[i].ClosurePot[k];}
+#endif
     
     
     /* matrix of the conserved variable gradients: rho, u, vx, vy, vz */

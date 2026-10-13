@@ -93,5 +93,19 @@
 #endif
 
 
+/* exact closure of the effective faces (HYDRO_CLOSED_FACES): with A_ij = -Face_Area_Vec the outward face of particle i, use
+   A~_ij = A_ij - |A_ij| (lambda_i - lambda_j), i.e. Face_Area_Vec += |Face_Area_Vec| (lambda_i - lambda_j). The potentials lambda are
+   relaxed in the gradient loop so that sum_j A~_ij = 0; the correction is antisymmetric in (i,j), so conservation is unchanged.
+   Applied last, so the faces used by every flux are the closed ones (see scripts/projection_tests/RESULTS_exact_closure_ngb32.md). */
+#if defined(HYDRO_CLOSED_FACES)
+    double Face_Area_Norm_Uncorrected = Face_Area_Norm;
+    {
+        double Face_Area_Norm2_corr = 0;
+        for(k=0;k<3;k++) {Face_Area_Vec[k] += Face_Area_Norm_Uncorrected * (local.ClosurePot[k] - CellP[j].ClosurePot[k]); Face_Area_Norm2_corr += Face_Area_Vec[k]*Face_Area_Vec[k];}
+        Face_Area_Norm = sqrt(Face_Area_Norm2_corr);
+    }
+#endif
+
+
 
 #endif

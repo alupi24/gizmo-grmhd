@@ -541,6 +541,9 @@ void init(void)
         CellP[i].ConditionNumber = 1;
         CellP[i].DtInternalEnergy = 0;
         CellP[i].FaceClosureError = 0;
+#ifdef HYDRO_CLOSED_FACES
+        CellP[i].ClosurePot[0] = CellP[i].ClosurePot[1] = CellP[i].ClosurePot[2] = 0; /* face-closure potential, relaxed in the gradient loop */
+#endif
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
         CellP[i].MaxKineticEnergyNgb = 0;
 #endif

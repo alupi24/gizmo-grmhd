@@ -1012,6 +1012,26 @@
 #include "../gr/gr.h" /* must follow the definitions above (it declares functions only compiled with PARTICLE_EXCISION) */
 #endif
 
+/* ----- exact closure of the effective MFM/MFV faces (HYDRO_CLOSED_FACES; scripts/projection_tests/RESULTS_exact_closure_ngb32.md).
+         The closure potentials are relaxed inside the gradient loop, as extra Jacobi sweeps. ----- */
+#if defined(HYDRO_CLOSED_FACES)
+#if !(defined(HYDRO_MESHLESS_FINITE_MASS) || defined(HYDRO_MESHLESS_FINITE_VOLUME)) || defined(HYDRO_REGULAR_GRID)
+#error "HYDRO_CLOSED_FACES requires the MFM or MFV effective faces"
+#endif
+#if CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(HYDRO_CLOSED_FACES)
+#define HYDRO_CLOSED_FACES_SWEEPS (HYDRO_CLOSED_FACES)    /* Jacobi sweeps per step for the face-closure potential */
+#else
+#define HYDRO_CLOSED_FACES_SWEEPS (2)
+#endif
+#if defined(MHD_CONSTRAINED_GRADIENT)
+#error "HYDRO_CLOSED_FACES cannot be combined with MHD_CONSTRAINED_GRADIENT (both use the extra gradient iterations)"
+#endif
+#if defined(KERNEL_CRK_FACES) || defined(HYDRO_TENSOR_FACE_CORRECTIONS)
+#error "HYDRO_CLOSED_FACES is implemented for the standard MFM/MFV faces only"
+#endif
+#endif
+
+
 #if defined(TURB_DIFF_ENERGY) || defined(TURB_DIFF_VELOCITY) || defined(TURB_DIFF_MASS) || defined(TURB_DIFF_METALS)
 #define TURB_DIFFUSION /* top-level switch to calculate properties needed for scalar turbulent diffusion/mixing: must enable with any specific version */
 #if defined(TURB_DIFF_VELOCITY) && !defined(VISCOSITY)

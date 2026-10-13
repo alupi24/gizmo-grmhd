@@ -59,6 +59,7 @@
 # --------------------------------------- Kernel Options
 #KERNEL_FUNCTION=7              # Choose the kernel function (2=quadratic peak, 3=cubic spline [default], 4=quartic spline, 5=quintic spline, 6=Wendland C2, 7=Wendland C4, 8=2-part quadratic, 9=Wendland C6)
 #KERNEL_CRK_FACES               # Use the consistent reproducing kernel [higher-order tensor corrections to kernel above, compared to our usual matrix formalism] from Frontiere, Raskin, and Owen to define the faces in MFM/MFV methods. can give more accurate closure, potentially improved accuracy in MHD problems. remains experimental for now.
+#HYDRO_CLOSED_FACES=2           # exact closure of the MFM/MFV effective faces, A_ij -> A_ij - |A_ij|(lambda_i - lambda_j) with sum_j A_ij = 0 (value = Jacobi sweeps per step, default 2; relaxed inside the gradient loop). Changes the faces of ALL fluxes (hydro too): validate with hydro tests. Not compatible with MHD_CONSTRAINED_GRADIENT, KERNEL_CRK_FACES, HYDRO_TENSOR_FACE_CORRECTIONS. See scripts/projection_tests/RESULTS_exact_closure_ngb32.md. Experimental
 ####################################################################################################
 
 

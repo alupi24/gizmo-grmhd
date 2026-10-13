@@ -41,6 +41,9 @@ extern struct gas_cell_data
     MyDouble Volume_0;              /*!< 0th-order cell volume for mesh-free (MFM/MFV-type) reconstruction at 0th-order volume quadrature */
     MyDouble Volume_1;              /*!< 1st-order cell volume for mesh-free (MFM/MFV-type) reconstruction at 1st-order volume quadrature */
 #endif
+#ifdef HYDRO_CLOSED_FACES
+    MyDouble ClosurePot[3];         /*!< face-closure potential lambda_i: faces are corrected as A_ij - |A_ij| (lambda_i - lambda_j) so that sum_j A_ij = 0 */
+#endif
     
 #ifdef OUTPUT_MACH_NUMBER
     MyDouble ISMDustChem_MachNumber;               /*!< mach number used for sub-resolution density enhancements from turbulence */

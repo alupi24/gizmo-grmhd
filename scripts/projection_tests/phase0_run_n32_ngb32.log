@@ -1,0 +1,50 @@
+# Phase-0 projection comparison: N = 32^3, N_ngb = 32, limiters ON
+  standalone self-checks done [8.7s]
+== lattice
+  geometry: N=32768 pairs=425984 (mean 26.0 partners/particle) h/dx=1.969 cond median=1.00 max=1.00 condfix=0 RSPH-fallback faces=0 sym-weight faces=0 [10.0s]
+  stencil setup: cost 13.2 PPE per pass, local-solve accuracy 1.0e-15 [2.4s]
+    uniform    std: base div 5.209e-17  (round-off: projection skipped)
+    uniform    tl : base div 5.209e-17  (round-off: projection skipped)
+    tg3d       std: base div 3.532e-03  exact 1.2e-15  CG its to 1e-3/1e-12: 13/34
+    tg3d       tl : base div 3.537e-03  exact 1.9e-15  CG its to 1e-3/1e-12: 13/34
+    abc        std: base div 1.323e-16  (round-off: projection skipped)
+    abc        tl : base div 2.532e-04  exact 3.0e-16  CG its to 1e-3/1e-12: 25/60
+    grad_short std: base div 2.479e-02  exact 2.0e-14  CG its to 1e-3/1e-12: 39/97
+    grad_short tl : base div 2.200e-02  exact 2.0e-14  CG its to 1e-3/1e-12: 39/97
+    grad_long  std: base div 4.169e-02  exact 2.6e-14  CG its to 1e-3/1e-12: 42/94
+    grad_long  tl : base div 4.070e-02  exact 4.0e-14  CG its to 1e-3/1e-12: 42/93
+    bump       std: base div 3.862e-01  exact 2.6e-13  CG its to 1e-3/1e-12: 44/98
+    bump       tl : base div 3.438e-01  exact 2.2e-13  CG its to 1e-3/1e-12: 44/97
+== jitter
+  geometry: N=32768 pairs=493272 (mean 30.1 partners/particle) h/dx=1.969 cond median=1.60 max=4.29 condfix=0 RSPH-fallback faces=0 sym-weight faces=0 [9.9s]
+  stencil setup: cost 15.5 PPE per pass, local-solve accuracy 1.0e-15 [2.7s]
+    uniform    std: base div 6.097e-01  exact 5.8e-13  CG its to 1e-3/1e-12: 19/138
+    uniform    tl : base div 6.097e-01  exact 5.8e-13  CG its to 1e-3/1e-12: 19/138
+    tg3d       std: base div 6.071e-01  exact 5.9e-13  CG its to 1e-3/1e-12: 20/138
+    tg3d       tl : base div 6.081e-01  exact 5.9e-13  CG its to 1e-3/1e-12: 20/138
+    abc        std: base div 6.122e-01  exact 5.6e-13  CG its to 1e-3/1e-12: 23/139
+    abc        tl : base div 6.126e-01  exact 5.6e-13  CG its to 1e-3/1e-12: 23/139
+    grad_short std: base div 6.100e-01  exact 5.9e-13  CG its to 1e-3/1e-12: 21/139
+    grad_short tl : base div 6.099e-01  exact 5.8e-13  CG its to 1e-3/1e-12: 20/139
+    grad_long  std: base div 6.108e-01  exact 4.6e-13  CG its to 1e-3/1e-12: 38/145
+    grad_long  tl : base div 6.107e-01  exact 4.5e-13  CG its to 1e-3/1e-12: 38/145
+    bump       std: base div 7.400e-01  exact 5.6e-13  CG its to 1e-3/1e-12: 43/149
+    bump       tl : base div 7.172e-01  exact 6.9e-13  CG its to 1e-3/1e-12: 43/148
+== glass
+  geometry: N=32768 pairs=485593 (mean 29.6 partners/particle) h/dx=1.969 cond median=1.17 max=1.64 condfix=0 RSPH-fallback faces=0 sym-weight faces=0 [12.0s]
+  stencil setup: cost 14.7 PPE per pass, local-solve accuracy 8.9e-16 [4.1s]
+    uniform    std: base div 1.125e-01  exact 1.0e-13  CG its to 1e-3/1e-12: 11/108
+    uniform    tl : base div 1.125e-01  exact 1.0e-13  CG its to 1e-3/1e-12: 11/108
+    tg3d       std: base div 1.126e-01  exact 1.1e-13  CG its to 1e-3/1e-12: 11/114
+    tg3d       tl : base div 1.128e-01  exact 1.1e-13  CG its to 1e-3/1e-12: 11/114
+    abc        std: base div 1.115e-01  exact 1.1e-13  CG its to 1e-3/1e-12: 11/110
+    abc        tl : base div 1.115e-01  exact 1.1e-13  CG its to 1e-3/1e-12: 11/110
+    grad_short std: base div 1.152e-01  exact 1.1e-13  CG its to 1e-3/1e-12: 26/125
+    grad_short tl : base div 1.147e-01  exact 1.1e-13  CG its to 1e-3/1e-12: 26/125
+    grad_long  std: base div 1.200e-01  exact 9.9e-14  CG its to 1e-3/1e-12: 40/132
+    grad_long  tl : base div 1.196e-01  exact 9.6e-14  CG its to 1e-3/1e-12: 40/132
+    bump       std: base div 4.052e-01  exact 3.8e-13  CG its to 1e-3/1e-12: 42/134
+    bump       tl : base div 3.639e-01  exact 3.5e-13  CG its to 1e-3/1e-12: 42/134
+# self-checks: 547 evaluated, 0 FAIL -> /Users/alessandro/Desktop/Work/PROJECTS/GRMHD/alessandro_lupi-gizmo-gr-6b9466c95b9e/divfree/scripts/projection_tests/phase0_selfchecks_n32_ngb32.txt
+# report  -> /Users/alessandro/Desktop/Work/PROJECTS/GRMHD/alessandro_lupi-gizmo-gr-6b9466c95b9e/divfree/scripts/projection_tests/RESULTS_phase0_n32_ngb32.md
+# results -> /Users/alessandro/Desktop/Work/PROJECTS/GRMHD/alessandro_lupi-gizmo-gr-6b9466c95b9e/divfree/scripts/projection_tests/phase0_results_n32_ngb32.csv

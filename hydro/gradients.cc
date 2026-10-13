@@ -31,7 +31,13 @@
 #endif
 
 
-#if defined(MHD_CONSTRAINED_GRADIENT)
+#if defined(HYDRO_CLOSED_FACES)
+/* closed faces (HYDRO_CLOSED_FACES): every gradient iteration evaluates the faces once, exactly as the hydro loop does (including the
+   closure correction with the current potentials), and the closure potentials get a Jacobi update after each iteration. So the number
+   of iterations equals the number of Jacobi sweeps per step (the potentials are kept between steps: warm start). */
+#define DF_CLOSURE_SWEEPS (HYDRO_CLOSED_FACES_SWEEPS)
+#define NUMBER_OF_GRADIENT_ITERATIONS (((DF_CLOSURE_SWEEPS) > 1) ? (DF_CLOSURE_SWEEPS) : 1)
+#elif defined(MHD_CONSTRAINED_GRADIENT)
 #if (MHD_CONSTRAINED_GRADIENT > 1)
 #define NUMBER_OF_GRADIENT_ITERATIONS 3
 #else
@@ -110,9 +116,14 @@ struct GasGraddata_in
     MyDouble Pos[3];
     MyFloat Mass;
     MyFloat KernelRadius;
-#ifdef MHD_CONSTRAINED_GRADIENT
+#if defined(MHD_CONSTRAINED_GRADIENT) || defined(HYDRO_CLOSED_FACES)
     MyDouble ConditionNumber;
     MyDouble NV_T[3][3];
+#endif
+#ifdef HYDRO_CLOSED_FACES
+    MyDouble ClosurePot[3];
+#endif
+#ifdef MHD_CONSTRAINED_GRADIENT
     MyFloat BGrad[3][3];
 #ifdef MHD_CONSTRAINED_GRADIENT_FAC_MEDDEV
     MyFloat PhiGrad[3];
@@ -161,6 +172,10 @@ struct GasGraddata_out
     MyFloat FaceDotB;
     MyFloat FaceCrossX[3][3];
 #endif
+#ifdef HYDRO_CLOSED_FACES
+    MyDouble DF_ClosureSum[3];        /* sum_j A~_ij (outward), with the current closure potentials */
+    MyDouble DF_ClosureNorm;          /* sum_j |A_ij| (uncorrected): Jacobi diagonal */
+#endif
     struct Quantities_for_Gradients Gradients[3];
     struct Quantities_for_Gradients Maxima;
     struct Quantities_for_Gradients Minima;
@@ -186,6 +201,10 @@ struct GasGraddata_out_iter
 #else
     MyFloat dummy;
 #endif
+#ifdef HYDRO_CLOSED_FACES
+    MyDouble DF_ClosureSum[3];
+    MyDouble DF_ClosureNorm;
+#endif
 }
 *GasGradDataResult_iter, *GasGradDataOut_iter;
 
@@ -208,6 +227,10 @@ static struct temporary_data_topass
 #endif
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && (HYDRO_FIX_MESH_MOTION==6)
     MyFloat GlassAcc[3];
+#endif
+#ifdef HYDRO_CLOSED_FACES
+    MyDouble DF_ClosureSum[3];
+    MyDouble DF_ClosureNorm;
 #endif
 #ifdef MHD_CONSTRAINED_GRADIENT
     MyDouble FaceDotB;
@@ -250,6 +273,12 @@ static inline void particle2in_GasGrad(struct GasGraddata_in *in, int i, int gra
 #endif
 
     if(SHOULD_I_USE_SPH_GRADIENTS(CellP[i].ConditionNumber)) {in->Mass *= -1;}
+#ifdef HYDRO_CLOSED_FACES
+    in->ConditionNumber = CellP[i].ConditionNumber;
+    {int j1,k1; for(j1=0;j1<3;j1++) {for(k1=0;k1<3;k1++) {in->NV_T[j1][k1] = CellP[i].NV_T[j1][k1];}}}
+    if(gradient_iteration > 0) {in->GQuant.Density = CellP[i].Density;} /* needed for V_i in the face construction */
+    for(k=0;k<3;k++) {in->ClosurePot[k] = CellP[i].ClosurePot[k];}
+#endif
 #ifdef MHD_CONSTRAINED_GRADIENT
     in->ConditionNumber = CellP[i].ConditionNumber;
     if(gradient_iteration > 0) {if(CellP[i].FlagForConstrainedGradients <= 0) {in->Mass = 0;}}
@@ -348,6 +377,9 @@ static inline void particle2in_GasGrad(struct GasGraddata_in *in, int i, int gra
 
 static inline void out2particle_GasGrad_iter(struct GasGraddata_out_iter *out, int i, int mode, int gradient_iteration)
 {
+#ifdef HYDRO_CLOSED_FACES
+    {int k1; for(k1=0;k1<3;k1++) {ASSIGN_ADD_PRESET(GasGradDataPasser[i].DF_ClosureSum[k1],out->DF_ClosureSum[k1],mode);} ASSIGN_ADD_PRESET(GasGradDataPasser[i].DF_ClosureNorm,out->DF_ClosureNorm,mode);}
+#endif
 #ifdef MHD_CONSTRAINED_GRADIENT
     {
         ASSIGN_ADD_PRESET(GasGradDataPasser[i].FaceDotB,out->FaceDotB,mode);
@@ -363,6 +395,9 @@ static inline void out2particle_GasGrad_iter(struct GasGraddata_out_iter *out, i
 
 static inline void out2particle_GasGrad(struct GasGraddata_out *out, int i, int mode, int gradient_iteration)
 {
+#ifdef HYDRO_CLOSED_FACES
+    {int k1; for(k1=0;k1<3;k1++) {ASSIGN_ADD_PRESET(GasGradDataPasser[i].DF_ClosureSum[k1],out->DF_ClosureSum[k1],mode);} ASSIGN_ADD_PRESET(GasGradDataPasser[i].DF_ClosureNorm,out->DF_ClosureNorm,mode);}
+#endif
 #ifdef MHD_CONSTRAINED_GRADIENT
     {
         ASSIGN_ADD_PRESET(GasGradDataPasser[i].FaceDotB,out->FaceDotB,mode);
@@ -698,6 +733,10 @@ void hydro_gradient_calc(void)
         for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
             if(P[i].Type==0)
             {
+#ifdef HYDRO_CLOSED_FACES
+                for(k=0;k<3;k++) {GasGradDataPasser[i].DF_ClosureSum[k] = 0;}
+                GasGradDataPasser[i].DF_ClosureNorm = 0;
+#endif
 #ifdef MHD_CONSTRAINED_GRADIENT
                 GasGradDataPasser[i].FaceDotB = 0;
 #ifdef MHD_CONSTRAINED_GRADIENT_MIDPOINT
@@ -920,6 +959,18 @@ void hydro_gradient_calc(void)
 
 
         /* here, we insert intermediate operations on the results, from the iterations we have completed */
+#ifdef HYDRO_CLOSED_FACES
+        /* Jacobi update of the closure potentials: lambda_i += (sum_j A~_ij) / (sum_j |A_ij|), which zeroes the residual of i for fixed neighbour
+           potentials (A~_ij outward, d(sum_j A~_ij)/d lambda_i = -sum_j |A_ij|) */
+        for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+            if((P[i].Type == 0) && (P[i].Mass > 0))
+            {
+                if((gradient_iteration < DF_CLOSURE_SWEEPS) && (GasGradDataPasser[i].DF_ClosureNorm > 0))
+                {
+                    for(k=0;k<3;k++) {double dlam = GasGradDataPasser[i].DF_ClosureSum[k] / GasGradDataPasser[i].DF_ClosureNorm; if(isfinite(dlam)) {CellP[i].ClosurePot[k] += dlam;}}
+                }
+            }
+#endif
 #ifdef MHD_CONSTRAINED_GRADIENT
         for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
             if(P[i].Type == 0)
@@ -1516,6 +1567,9 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
 #if defined(HYDRO_SPH) || defined(KERNEL_CRK_FACES)
     kernel_mode_i = 0; // for some circumstances, we require both wk and dwk //
 #endif
+#if defined(HYDRO_CLOSED_FACES)
+    kernel_mode_i = 0; // the faces need dwk as well (RSPH fallback), exactly as in the hydro loop //
+#endif
 
 
     /* Now start the actual neighbor computation for this particle */
@@ -1594,7 +1648,7 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                 {
                     kernel.dwk_i = kernel.wk_i = 0;
                 }
-#if defined(MHD_CONSTRAINED_GRADIENT) || defined(KERNEL_CRK_FACES)
+#if defined(MHD_CONSTRAINED_GRADIENT) || defined(KERNEL_CRK_FACES) || defined(HYDRO_CLOSED_FACES)
                 if(kernel.r < h_j)
 #else
                 if((kernel.r < h_j) && (swap_to_j))
@@ -1603,7 +1657,7 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                     /* ok, we need the j-particle weights, but first check what kind of gradient we are calculating */
                     sph_gradients_flag_j = SHOULD_I_USE_SPH_GRADIENTS(CellP[j].ConditionNumber);
                     int kernel_mode_j;
-#if defined(HYDRO_SPH) || defined(KERNEL_CRK_FACES)
+#if defined(HYDRO_SPH) || defined(KERNEL_CRK_FACES) || defined(HYDRO_CLOSED_FACES)
                     kernel_mode_j = 0; // for some circumstances, we require both wk and dwk //
 #else
                     if(sph_gradients_flag_j) {kernel_mode_j=0;} else {kernel_mode_j=-1;}
@@ -1723,6 +1777,22 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                 if(swap_to_j) {for(k=0;k<3;k++) {GasGradDataPasser[j].PhiGrad[k] += dphi_i * kernel.dp[k];}}
 #endif
 #endif // MHD_CONSTRAINED_GRADIENT
+
+#if defined(HYDRO_CLOSED_FACES)
+                {
+                    /* the same faces as the hydro loop (including the closure correction with the current potentials); the hydro loop uses
+                       physical particle sizes, so convert them here (they enter the face weights / area limiter) */
+                    double Face_Area_Vec[3], Face_Area_Norm, V_j = P[j].Mass / CellP[j].Density, cnumcrit2 = ((double)CONDITION_NUMBER_DANGER)*((double)CONDITION_NUMBER_DANGER) - local.ConditionNumber*local.ConditionNumber;
+                    double Particle_Size_i_phys = Particle_Size_i * All.cf_atime, Particle_Size_j_phys = Particle_Size_j * All.cf_atime;
+                    {
+                        double Particle_Size_i = Particle_Size_i_phys, Particle_Size_j = Particle_Size_j_phys;
+#include "compute_finitevol_faces.h"
+                        /* closure residual: sum_j A~_ij with A~_ij = -Face_Area_Vec the outward face of i; Jacobi diagonal sum_j |A_ij| */
+                        if(gradient_iteration == 0) {for(k=0;k<3;k++) {out.DF_ClosureSum[k] -= Face_Area_Vec[k];} out.DF_ClosureNorm += Face_Area_Norm_Uncorrected;}
+                        else {for(k=0;k<3;k++) {out_iter.DF_ClosureSum[k] -= Face_Area_Vec[k];} out_iter.DF_ClosureNorm += Face_Area_Norm_Uncorrected;}
+                    }
+                }
+#endif
 
                 if(gradient_iteration == 0)
                 {
