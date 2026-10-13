@@ -174,6 +174,7 @@ struct GasGraddata_out
 #endif
 #ifdef HYDRO_CLOSED_FACES
     MyDouble DF_ClosureSum[3];        /* sum_j A~_ij (outward), with the current closure potentials */
+    MyDouble DF_ClosureSum0[3];       /* sum_j A_ij (outward), uncorrected faces: reference for the residual closure */
     MyDouble DF_ClosureNorm;          /* sum_j |A_ij| (uncorrected): Jacobi diagonal */
 #endif
     struct Quantities_for_Gradients Gradients[3];
@@ -203,6 +204,7 @@ struct GasGraddata_out_iter
 #endif
 #ifdef HYDRO_CLOSED_FACES
     MyDouble DF_ClosureSum[3];
+    MyDouble DF_ClosureSum0[3];
     MyDouble DF_ClosureNorm;
 #endif
 }
@@ -230,6 +232,7 @@ static struct temporary_data_topass
 #endif
 #ifdef HYDRO_CLOSED_FACES
     MyDouble DF_ClosureSum[3];
+    MyDouble DF_ClosureSum0[3];
     MyDouble DF_ClosureNorm;
 #endif
 #ifdef MHD_CONSTRAINED_GRADIENT
@@ -378,7 +381,7 @@ static inline void particle2in_GasGrad(struct GasGraddata_in *in, int i, int gra
 static inline void out2particle_GasGrad_iter(struct GasGraddata_out_iter *out, int i, int mode, int gradient_iteration)
 {
 #ifdef HYDRO_CLOSED_FACES
-    {int k1; for(k1=0;k1<3;k1++) {ASSIGN_ADD_PRESET(GasGradDataPasser[i].DF_ClosureSum[k1],out->DF_ClosureSum[k1],mode);} ASSIGN_ADD_PRESET(GasGradDataPasser[i].DF_ClosureNorm,out->DF_ClosureNorm,mode);}
+    {int k1; for(k1=0;k1<3;k1++) {ASSIGN_ADD_PRESET(GasGradDataPasser[i].DF_ClosureSum[k1],out->DF_ClosureSum[k1],mode); ASSIGN_ADD_PRESET(GasGradDataPasser[i].DF_ClosureSum0[k1],out->DF_ClosureSum0[k1],mode);} ASSIGN_ADD_PRESET(GasGradDataPasser[i].DF_ClosureNorm,out->DF_ClosureNorm,mode);}
 #endif
 #ifdef MHD_CONSTRAINED_GRADIENT
     {
@@ -396,7 +399,7 @@ static inline void out2particle_GasGrad_iter(struct GasGraddata_out_iter *out, i
 static inline void out2particle_GasGrad(struct GasGraddata_out *out, int i, int mode, int gradient_iteration)
 {
 #ifdef HYDRO_CLOSED_FACES
-    {int k1; for(k1=0;k1<3;k1++) {ASSIGN_ADD_PRESET(GasGradDataPasser[i].DF_ClosureSum[k1],out->DF_ClosureSum[k1],mode);} ASSIGN_ADD_PRESET(GasGradDataPasser[i].DF_ClosureNorm,out->DF_ClosureNorm,mode);}
+    {int k1; for(k1=0;k1<3;k1++) {ASSIGN_ADD_PRESET(GasGradDataPasser[i].DF_ClosureSum[k1],out->DF_ClosureSum[k1],mode); ASSIGN_ADD_PRESET(GasGradDataPasser[i].DF_ClosureSum0[k1],out->DF_ClosureSum0[k1],mode);} ASSIGN_ADD_PRESET(GasGradDataPasser[i].DF_ClosureNorm,out->DF_ClosureNorm,mode);}
 #endif
 #ifdef MHD_CONSTRAINED_GRADIENT
     {
@@ -734,7 +737,7 @@ void hydro_gradient_calc(void)
             if(P[i].Type==0)
             {
 #ifdef HYDRO_CLOSED_FACES
-                for(k=0;k<3;k++) {GasGradDataPasser[i].DF_ClosureSum[k] = 0;}
+                for(k=0;k<3;k++) {GasGradDataPasser[i].DF_ClosureSum[k] = GasGradDataPasser[i].DF_ClosureSum0[k] = 0;}
                 GasGradDataPasser[i].DF_ClosureNorm = 0;
 #endif
 #ifdef MHD_CONSTRAINED_GRADIENT
@@ -965,6 +968,20 @@ void hydro_gradient_calc(void)
         for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
             if((P[i].Type == 0) && (P[i].Mass > 0))
             {
+                if((gradient_iteration == NUMBER_OF_GRADIENT_ITERATIONS-1) && (GasGradDataPasser[i].DF_ClosureNorm > 0))
+                {
+                    /* residual closure of the corrected faces relative to the uncorrected ones (measured before this last update, so an upper estimate):
+                       FaceClosureError (density.cc) estimates the closure of the uncorrected faces, and controls the extra neighbours and the first-order
+                       fallback of the Riemann problem; it is kept equal to (uncorrected estimate) x ClosureResidual, so it measures the faces actually used */
+                    double c2=0, c02=0; for(k=0;k<3;k++) {c2 += GasGradDataPasser[i].DF_ClosureSum[k]*GasGradDataPasser[i].DF_ClosureSum[k]; c02 += GasGradDataPasser[i].DF_ClosureSum0[k]*GasGradDataPasser[i].DF_ClosureSum0[k];}
+                    double c0_floor = 1.e-3 * GasGradDataPasser[i].DF_ClosureNorm, r_new = sqrt(c2) / DMAX(sqrt(c02), c0_floor); /* floor: already-closed uncorrected faces */
+                    if(!isfinite(r_new)) {r_new = 1;}
+                    r_new = DMIN(DMAX(r_new, 1.e-3), 1.); /* never above the uncorrected estimate; floored so the ratio below is safe */
+#if !defined(HYDRO_KERNEL_SURFACE_VOLCORR) && !defined(HYDRO_EXPLICITLY_INTEGRATE_VOLUME) /* there FaceClosureError holds a volume correction / a volume */
+                    if(CellP[i].ClosureResidual > 0) {CellP[i].FaceClosureError *= r_new / CellP[i].ClosureResidual;}
+#endif
+                    CellP[i].ClosureResidual = r_new;
+                }
                 if((gradient_iteration < DF_CLOSURE_SWEEPS) && (GasGradDataPasser[i].DF_ClosureNorm > 0))
                 {
                     for(k=0;k<3;k++) {double dlam = GasGradDataPasser[i].DF_ClosureSum[k] / GasGradDataPasser[i].DF_ClosureNorm; if(isfinite(dlam)) {CellP[i].ClosurePot[k] += dlam;}}
@@ -1788,8 +1805,9 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                         double Particle_Size_i = Particle_Size_i_phys, Particle_Size_j = Particle_Size_j_phys;
 #include "compute_finitevol_faces.h"
                         /* closure residual: sum_j A~_ij with A~_ij = -Face_Area_Vec the outward face of i; Jacobi diagonal sum_j |A_ij| */
-                        if(gradient_iteration == 0) {for(k=0;k<3;k++) {out.DF_ClosureSum[k] -= Face_Area_Vec[k];} out.DF_ClosureNorm += Face_Area_Norm_Uncorrected;}
-                        else {for(k=0;k<3;k++) {out_iter.DF_ClosureSum[k] -= Face_Area_Vec[k];} out_iter.DF_ClosureNorm += Face_Area_Norm_Uncorrected;}
+                        double dA_corr[3]; for(k=0;k<3;k++) {dA_corr[k] = Face_Area_Norm_Uncorrected * (local.ClosurePot[k] - CellP[j].ClosurePot[k]);} /* Face_Area_Vec - dA_corr = uncorrected face */
+                        if(gradient_iteration == 0) {for(k=0;k<3;k++) {out.DF_ClosureSum[k] -= Face_Area_Vec[k]; out.DF_ClosureSum0[k] -= Face_Area_Vec[k] - dA_corr[k];} out.DF_ClosureNorm += Face_Area_Norm_Uncorrected;}
+                        else {for(k=0;k<3;k++) {out_iter.DF_ClosureSum[k] -= Face_Area_Vec[k]; out_iter.DF_ClosureSum0[k] -= Face_Area_Vec[k] - dA_corr[k];} out_iter.DF_ClosureNorm += Face_Area_Norm_Uncorrected;}
                     }
                 }
 #endif

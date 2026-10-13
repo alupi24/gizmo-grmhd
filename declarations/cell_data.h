@@ -43,6 +43,7 @@ extern struct gas_cell_data
 #endif
 #ifdef HYDRO_CLOSED_FACES
     MyDouble ClosurePot[3];         /*!< face-closure potential lambda_i: faces are corrected as A_ij - |A_ij| (lambda_i - lambda_j) so that sum_j A_ij = 0 */
+    MyDouble ClosureResidual;       /*!< residual closure of the corrected faces, |sum_j A~_ij| / |sum_j A_ij| (last sweep): rescales FaceClosureError */
 #endif
     
 #ifdef OUTPUT_MACH_NUMBER
