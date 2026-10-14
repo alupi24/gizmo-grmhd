@@ -365,6 +365,9 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #ifdef HYDRO_SPH
 #include "hydro_core_sph.h"
 #else
+#if defined(HYDRO_CLOSED_FACES_DIVB_ONLY)
+                double divB_closure_pair = 0; /* set in hydro_core_meshless.h: closure correction of this face's contribution to the divergence */
+#endif
 #include "hydro_core_meshless.h"
 #endif
 
@@ -485,6 +488,9 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #ifndef FREEZE_HYDRO
                 for(k=0;k<3;k++) {out.DtB[k] += FluxCorrectionFactor_to_i * Fluxes.B[k];}
                 out.divB += Fluxes.B_normal_corrected;
+#if defined(HYDRO_CLOSED_FACES_DIVB_ONLY)
+                out.divB_ClosureCorr += divB_closure_pair;
+#endif
 #if (defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)) && defined(HYDRO_MESHLESS_FINITE_VOLUME) // mass-based phi-flux
                 out.DtPhi += FluxCorrectionFactor_to_i * Fluxes.phi;
 #endif
@@ -546,6 +552,9 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #ifndef FREEZE_HYDRO
                     for(k=0;k<3;k++) {CellP[j].DtB[k] -= FluxCorrectionFactor_to_j * Fluxes.B[k];}
                     CellP[j].divB -= Fluxes.B_normal_corrected;
+#if defined(HYDRO_CLOSED_FACES_DIVB_ONLY)
+                    CellP[j].divB_ClosureCorr -= divB_closure_pair;
+#endif
 #if defined(DIVBCLEANING_DEDNER) && defined(HYDRO_MESHLESS_FINITE_VOLUME) // mass-based phi-flux
                     CellP[j].DtPhi -= FluxCorrectionFactor_to_j * Fluxes.phi;
 #endif

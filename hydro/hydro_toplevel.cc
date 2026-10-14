@@ -392,6 +392,9 @@ struct OUTPUT_STRUCT_NAME
     MyDouble Face_Area[3];
     MyFloat DtB[3];
     MyFloat divB;
+#ifdef HYDRO_CLOSED_FACES_DIVB_ONLY
+    MyFloat divB_ClosureCorr;
+#endif
 #if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
     MyFloat DtPhi;
@@ -707,6 +710,9 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
     /* can't just do DtB += out-> DtB, because for some hydro methods, the induction equation is solved in the density loop; need to simply add it here */
     for(k=0;k<3;k++) {CellP[i].DtB[k] += out->DtB[k]; CellP[i].Face_Area[k] += out->Face_Area[k];}
     CellP[i].divB += out->divB;
+#ifdef HYDRO_CLOSED_FACES_DIVB_ONLY
+    CellP[i].divB_ClosureCorr += out->divB_ClosureCorr;
+#endif
 #if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
     CellP[i].DtPhi += out->DtPhi;
@@ -927,8 +933,14 @@ void hydro_final_operations_and_cleanup(void)
                 for(k=0;k<3;k++) {b2_max += B_local[k]*B_local_cov[k]*CellP[i].gr.gdet*CellP[i].gr.gdet;}
                 b2_max = 100.0 * fabs( sqrt(b2_max) * P[i].Mass / (CellP[i].Density) * 1.0 / (Get_Particle_Size(i)) );
                 if(fabs(CellP[i].divB) > b2_max) {CellP[i].divB *= b2_max / fabs(CellP[i].divB);}
+                double divB_source = CellP[i].divB;
+#ifdef HYDRO_CLOSED_FACES_DIVB_ONLY
+                /* the psihat source sees the divergence on the closed faces; the Powell terms above keep divB, consistent with the fluxes (original
+                   faces), whose geometric monopole force B (B.sum_j A_ij) they cancel */
+                divB_source += CellP[i].divB_ClosureCorr; if(fabs(divB_source) > b2_max) {divB_source *= b2_max / fabs(divB_source);}
+#endif
                 /* d(D psihat)/dt = -alpha c_h D div(curlyB)/sqrt(gamma): linear in c_h (eq. 9 of the notes; was c_h^2 = 1 in the previous live branch) */
-                CellP[i].DtPhi -= c_h*SIGMAH*CellP[i].gr.alpha*CellP[i].Density*CellP[i].divB/CellP[i].gr.gdet;
+                CellP[i].DtPhi -= c_h*SIGMAH*CellP[i].gr.alpha*CellP[i].Density*divB_source/CellP[i].gr.gdet;
             }
 #endif //DIVBCLEANING_GR
 
@@ -973,9 +985,13 @@ void hydro_final_operations_and_cleanup(void)
                 for(k=0;k<3;k++) {b2_max += Get_Gas_BField(i,k)*Get_Gas_BField(i,k);}
                 b2_max = 100.0 * fabs( sqrt(b2_max) * All.cf_a2inv * P[i].Mass / (CellP[i].Density*All.cf_a3inv) * 1.0 / (P[i].KernelRadius*All.cf_atime) );
                 if(fabs(CellP[i].divB) > b2_max) {CellP[i].divB *= b2_max / fabs(CellP[i].divB);}
+                double divB_source = CellP[i].divB;
+#ifdef HYDRO_CLOSED_FACES_DIVB_ONLY
+                divB_source += CellP[i].divB_ClosureCorr; if(fabs(divB_source) > b2_max) {divB_source *= b2_max / fabs(divB_source);} /* closed faces for the phi source only (see the GR block) */
+#endif
                 /* ok now can apply this to get the growth rate of phi */
                 // CellP[i].DtPhi -= tmp_ded * tmp_ded * All.DivBcleanHyperbolicSigma * CellP[i].divB;
-                CellP[i].DtPhi -= tmp_ded * tmp_ded * All.DivBcleanHyperbolicSigma * CellP[i].divB * CellP[i].Density*All.cf_a3inv; // mass-based phi-flux
+                CellP[i].DtPhi -= tmp_ded * tmp_ded * All.DivBcleanHyperbolicSigma * divB_source * CellP[i].Density*All.cf_a3inv; // mass-based phi-flux
             }
 #endif
 #endif // MAGNETIC
@@ -1272,6 +1288,9 @@ void hydro_force_initial_operations_preloop(void)
 #endif
 #ifdef MAGNETIC
             CellP[i].divB = 0; for(k=0;k<3;k++) {CellP[i].Face_Area[k] = 0;}
+#ifdef HYDRO_CLOSED_FACES_DIVB_ONLY
+            CellP[i].divB_ClosureCorr = 0;
+#endif
 #if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
             for(k=0;k<3;k++) {CellP[i].DtB_PhiCorr[k] = 0;}
 #ifdef DIVBCLEANING_GR
