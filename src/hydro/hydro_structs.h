@@ -24,9 +24,12 @@ struct Conserved_var_Riemann
 #ifdef MAGNETIC
     Vec3<MyDouble> B;
     MyDouble B_normal_corrected;
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
     MyDouble phi;
 #endif
+#endif
+#if defined(GENERAL_RELATIVITY) && defined(HYDRO_MESHLESS_FINITE_VOLUME) && defined(GR_ENTROPY_SWITCH)
+    MyDouble Entropy;
 #endif
 #ifdef COSMIC_RAY_FLUID
     MyDouble CosmicRayPressure[N_CR_PARTICLE_BINS];
@@ -72,6 +75,21 @@ struct hydro_data_in
     MyFloat KernelRadius;
     MyFloat Mass;
     MyFloat Density;
+#ifdef GENERAL_RELATIVITY
+    /* GR: Vel carries the Eulerian velocity v = (dx/dt + beta)/alpha (and ParticleVel the Eulerian velocity of the mesh-generating point);
+       VelCoord is the coordinate velocity dx/dt of the mesh-generating point (face velocities), FourVelocity = W*v is what is reconstructed */
+    MyFloat RestMassDensity;
+    Vec3<MyFloat> FourVelocity;
+    Vec3<MyFloat> VelCoord;
+#ifdef GR_ENTROPY_SWITCH
+    MyFloat Entropy;
+#endif
+#ifdef MAGNETIC
+    MyFloat b0;                     /*!< alpha b^0 of the rest-frame field (BPred holds the primitive Eulerian field B^i) */
+    Vec3<MyFloat> b;                /*!< covariant rest-frame field b_i */
+    MyFloat b2;                     /*!< b^mu b_mu */
+#endif
+#endif
     MyFloat Pressure;
     MyFloat ConditionNumber;
     MyFloat FaceClosureError;
@@ -90,9 +108,12 @@ struct hydro_data_in
         Vec3<MyDouble> Density;
         Vec3<MyDouble> Pressure;
         Mat3<MyDouble> Velocity;
+#ifdef GENERAL_RELATIVITY
+        Vec3<MyDouble> RestMassDensity;
+#endif
 #ifdef MAGNETIC
         Mat3<MyDouble> B;
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
         Vec3<MyDouble> Phi;
 #endif
 #endif
@@ -176,7 +197,7 @@ struct hydro_data_in
 #if defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
     MyFloat Balpha;
 #endif
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
     MyFloat PhiPred;
 #endif
 #ifdef MHD_MODIFIED_GRADIENT
@@ -230,6 +251,18 @@ struct hydro_data_out
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
     MyFloat MaxKineticEnergyNgb;
 #endif
+#ifdef GENERAL_RELATIVITY
+    MyDouble DtVolume;              /*!< rate of change of the volume from the Riemann problems (used by the GR kick/predict) */
+#ifdef DIVBCLEANING_GR
+    MyFloat LocalCleaningSpeed;     /*!< local cleaning speed c_h of the particle, from its magnetosonic speed (Route B); identical in every pair */
+#endif
+#ifdef GR_ENTROPY_SWITCH
+    int EntropyCheck;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+    MyDouble DtEntropy;
+#endif
+#endif
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     MyDouble DtMass;
     MyDouble dMass;
@@ -263,11 +296,14 @@ struct hydro_data_out
     Vec3<MyDouble> Face_Area;
     Vec3<MyFloat> DtB;
     MyFloat divB;
-#if defined(DIVBCLEANING_DEDNER)
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
     MyFloat DtPhi;
 #endif
     Vec3<MyFloat> DtB_PhiCorr;
+#ifdef DIVBCLEANING_GR
+    Vec3<MyFloat> MeanPhi_PhiCorr;  /*!< face-area-weighted mean psi at the faces (GR cleaning sources) */
+#endif
 #endif
 #endif // MAGNETIC //
 

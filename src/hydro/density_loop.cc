@@ -964,7 +964,11 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
                 set_mesh_motion(i);
   #elif ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
                 {
+#if defined(GENERAL_RELATIVITY) && defined(MAGNETIC)
+                    const double eps_pvel = 0.2; /* GR MHD: less weight to the neighbours (as in the original GR code) */
+#else
                     const double eps_pvel = 0.3;
+#endif
                     /* legacy: CellP[i].ParticleVel = CellP[i].VelPred*(1-eps) + CellP[i].ParticleVel*(eps/Density) */
                     for (int k = 0; k < 3; ++k) {
                         CellP[i].ParticleVel[k] = (MyFloat)(

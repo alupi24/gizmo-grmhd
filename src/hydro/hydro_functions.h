@@ -88,9 +88,29 @@ void hydro_accumulate_neighbor(
 
     Vec3<MyDouble> VelPred_j = CellP[j].VelPred;
     NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos, P[j].Pos, VelPred_j, -1);
+#ifdef GENERAL_RELATIVITY
+    /* GR: Eulerian velocity of j, its spatial four-velocity W*v (reconstructed in the core) and the coordinate velocity of its mesh-generating point */
+    struct hydro_gr_pair_j grj;
+    const struct gr_metric *gr_j = &(CellP[j].gr);
+    grj.gr_limiter_j = gr_j->limiter;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
+    grj.VelCoord_j = CellP[j].ParticleVel;
+#else
+    grj.VelCoord_j = CellP[j].VelPred;
+#endif
+    VelPred_j = Vphys(VelPred_j, gr_j);
+    {double Wlorentz_j = lorentz_factor(gr_j->gamma, VelPred_j, grj.gr_limiter_j); grj.FourVelocity_j = Wlorentz_j*VelPred_j;} /* (the velocity is limited in place where required) */
+#endif
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+#ifdef GENERAL_RELATIVITY
+    Vec3<MyDouble> ParticleVel_j = CellP[j].ParticleVel; /* GR: the velocity of the mesh-generating point of j */
+#else
     Vec3<MyDouble> ParticleVel_j = CellP[j].VelPred;
+#endif
     NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos, P[j].Pos, ParticleVel_j, -1);
+#ifdef GENERAL_RELATIVITY
+    ParticleVel_j = Vphys(ParticleVel_j, gr_j);
+#endif
 #endif
     kernel.dv = local.Vel - VelPred_j;
     kernel.rho_ij_inv = 2.0 / (local.Density + CellP[j].Density);
@@ -113,7 +133,10 @@ void hydro_accumulate_neighbor(
 #ifdef MAGNETIC
     BPred_j = CellP[j].Bfield();
     NGB_SHEARBOX_BOUNDARY_BCORR_(local.Pos, P[j].Pos, BPred_j, -1);
-#ifdef DIVBCLEANING_DEDNER
+#ifdef GENERAL_RELATIVITY
+    BPred_j /= gr_j->gdet; /* GR: the primitive (Eulerian) field B^i of j */
+#endif
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
     PhiPred_j = CellP[j].PhiPred / P[j].Mass;
 #endif
 #endif
@@ -179,7 +202,27 @@ void hydro_accumulate_neighbor(
     /* magneticspeed_i/j declared unconditionally so hydro_core_sph can take
        them as plain args; zero under !MAGNETIC (unused on that path). */
     double magneticspeed_i = 0, magneticspeed_j = 0;
-#ifdef MAGNETIC
+#if defined(MAGNETIC) && defined(GENERAL_RELATIVITY)
+    /* GR: b^2 in the fluid rest frame, relativistic Alfven speed v_A^2 = b^2/(rho h + b^2) and magnetosonic speed^2 = c_s^2 (1-v_A^2) + v_A^2 */
+    {
+        double b0_j; Vec3<double> b_j, vtmp_j = VelPred_j;
+        kernel.b2_j = gr_bfield_restframe(gr_j, BPred_j, vtmp_j, &b0_j, &b_j, grj.gr_limiter_j);
+    }
+    double hstar_j = gr_get_primitive_density(CellP[j].Density, CellP[j].VelPred, gr_j, grj.gr_limiter_j)*(1. + CellP[j].InternalEnergyPred) + CellP[j].Pressure + kernel.b2_j;
+    kernel.alfven2_j = kernel.b2_j / hstar_j;
+    double vcsa2_j = kernel.sound_j*kernel.sound_j*(1 - kernel.alfven2_j) + kernel.alfven2_j;
+    double vcsa2_i = kernel.sound_i*kernel.sound_i*(1 - kernel.alfven2_i) + kernel.alfven2_i;
+    magneticspeed_i = sqrt(vcsa2_i); magneticspeed_j = sqrt(vcsa2_j);
+    kernel.vsig = magneticspeed_i + magneticspeed_j;
+#ifdef DIVBCLEANING_GR
+    /* Route B cleaning speeds: local value on each side (boosted magnetosonic speed, Fedrigo & Lupi 2025); at the face the max over the pair */
+    grj.c_h_i = gr_cleaning_speed(magneticspeed_i); grj.c_h_j = gr_cleaning_speed(magneticspeed_j); grj.c_h_ij = DMAX(grj.c_h_i, grj.c_h_j);
+    out.LocalCleaningSpeed = grj.c_h_i; /* the same value in every pair of i */
+#ifdef GR_CLEANING_LEGACY
+    {double v_tmp = kernel.vsig; kernel.vsig += VEL_CLEANING*v_tmp; kernel.vsig /= (1. + 0.25*VEL_CLEANING*v_tmp*v_tmp);} /* old relativistic boost of the fluid signal velocity */
+#endif
+#endif
+#elif defined(MAGNETIC)
     kernel.b2_j = BPred_j.norm_sq();
     kernel.alfven2_j = kernel.b2_j * fac_magnetic_pressure / CellP[j].Density;
     kernel.alfven2_j = DMIN(kernel.alfven2_j, 1000. * kernel.sound_j*kernel.sound_j);
@@ -197,7 +240,31 @@ void hydro_accumulate_neighbor(
 
     /* relative velocity along separation vector + hubble correction */
     kernel.vdotr2 = dot(kernel.dp, kernel.dv);
+#ifdef GENERAL_RELATIVITY
+    { /* relativistic composition of the approach velocity */
+        double vstar_i = dot(kernel.dp, local.Vel)*rinv, vstar_j = dot(kernel.dp, VelPred_j)*rinv;
+        kernel.vdotr2 *= 1./(1. - vstar_i*vstar_j);
+    }
+#endif
     if(All.ComovingIntegrationOn) {kernel.vdotr2 += All.cf_hubble_a2 * r2;}
+#ifdef GENERAL_RELATIVITY
+    {
+#if defined(HYDRO_MESHLESS_FINITE_VOLUME)
+        double fac_appvel = 6;
+#else
+        double fac_appvel = 2;
+#endif
+        kernel.vsig += fac_appvel * fac_mu * fabs(kernel.vdotr2) * rinv;
+#ifdef MAGNETIC
+        kernel.vsig /= (1. + 0.25*(magneticspeed_i + magneticspeed_j)*fabs(kernel.vdotr2)*rinv); /* relativistic composition (the maximum wave speed is 1) */
+#if defined(DIVBCLEANING_GR) && !defined(GR_CLEANING_LEGACY)
+        if(2.*grj.c_h_ij > kernel.vsig) {kernel.vsig = 2.*grj.c_h_ij;} /* the cleaning wave (speed c_h on each side) must be resolved by the Courant condition */
+#endif
+#else
+        kernel.vsig /= (1. + 0.25*(kernel.sound_i + kernel.sound_j)*fabs(kernel.vdotr2)*rinv);
+#endif
+    }
+#else
     if(kernel.vdotr2 < 0)
     {
 #if defined(HYDRO_SPH) || defined(HYDRO_MESHLESS_FINITE_VOLUME)
@@ -206,6 +273,7 @@ void hydro_accumulate_neighbor(
         kernel.vsig -= fac_mu * kernel.vdotr2 * rinv;
 #endif
     }
+#endif
 
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
     double KE = kernel.dv.norm_sq();
@@ -258,7 +326,11 @@ void hydro_accumulate_neighbor(
         particle_vel_j_for_core = ParticleVel_j;
 #endif
         hydro_core_meshless_compute_pair(local, j, P, CellP, VelPred_j, particle_vel_j_for_core,
-                                         BPred_j, PhiPred_j, kernel, rinv, r2, V_i, V_j,
+                                         BPred_j, PhiPred_j,
+#ifdef GENERAL_RELATIVITY
+                                         grj,
+#endif
+                                         kernel, rinv, r2, V_i, V_j,
                                          Particle_Size_i, Particle_Size_j, cnumcrit2,
                                          fac_magnetic_pressure, tensile_correction_factor,
                                          epsilon_entropic_eos_big, epsilon_entropic_eos_small,
@@ -392,6 +464,20 @@ void hydro_accumulate_neighbor(
 #endif
     out.Acc += Fluxes.v;
     out.DtInternalEnergy += Fluxes.p;
+#if defined(GENERAL_RELATIVITY) && !defined(FREEZE_HYDRO)
+    {
+        /* the volume variation from the Riemann problems, used by the GR kick/predict to estimate the new volume that multiplies the conserved
+           variables [accumulated for the hydro and the MHD solvers: the C/C++ GR code only did it under MAGNETIC] */
+        double wt_face_sum = Face_Area_Norm * (-face_area_dot_vel + face_vel_i);
+#ifdef HYDRO_MESHLESS_FINITE_MASS
+        wt_face_sum = Face_Area_Norm * (-Riemann_out.S_M + face_vel_i);
+#endif
+        out.DtVolume += wt_face_sum;
+    }
+#if defined(HYDRO_MESHLESS_FINITE_VOLUME) && defined(GR_ENTROPY_SWITCH)
+    out.DtEntropy += Fluxes.Entropy;
+#endif
+#endif
 #ifdef MAGNETIC
 #ifndef HYDRO_SPH
     out.Face_Area += Face_Area_Vec;
@@ -399,17 +485,23 @@ void hydro_accumulate_neighbor(
 #ifndef FREEZE_HYDRO
     out.DtB += Fluxes.B;
     out.divB += Fluxes.B_normal_corrected;
-#if defined(DIVBCLEANING_DEDNER) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
+#if (defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
     out.DtPhi += Fluxes.phi;
 #endif
 #ifdef HYDRO_SPH
     out.DtInternalEnergy += dot(magfluxv, local.Vel) / All.cf_atime;
     out.DtInternalEnergy += resistivity_heatflux;
 #else
+#ifndef GENERAL_RELATIVITY /* GR: the magnetic energy is part of the conserved tau; no separate PdV term */
     {
         double wt_face_sum = Face_Area_Norm * (-face_area_dot_vel + face_vel_i);
         out.DtInternalEnergy += 0.5 * kernel.b2_i * All.cf_a2inv * All.cf_a2inv * wt_face_sum;
     }
+#endif
+#ifdef DIVBCLEANING_GR
+    out.DtB_PhiCorr += Riemann_out.phi_normal_db * Face_Area_Vec;
+    out.MeanPhi_PhiCorr += Riemann_out.phi_normal_mean * Face_Area_Vec;
+#endif
 #ifdef DIVBCLEANING_DEDNER
     for(k=0; k<3; k++) {
         out.DtB_PhiCorr[k] += Riemann_out.phi_normal_db * Face_Area_Vec[k];

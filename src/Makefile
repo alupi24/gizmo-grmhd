@@ -887,7 +887,7 @@ OBJS  = $(CORE_OBJS) $(SYSTEM_OBJS) $(GRAVITY_OBJS) $(HYDRO_OBJS) $(GR_OBJS) \
 
 
 ## include files needed at compile time for the above objects
-INCL    += gr/gr.h gr/gr_functions.h gr/gr_con2prim_functions.h
+INCL    += gr/gr.h gr/gr_functions.h gr/gr_con2prim_functions.h gr/gr_riemann_functions.h
 INCL    += 	declarations/allvars.h \
 			core/proto.h \
 			gravity/forcetree.h \

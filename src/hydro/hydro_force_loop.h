@@ -245,6 +245,22 @@ struct HydroForceSpec
         /* Dead-row gate (see HydroForceActiveData::enabled): also guards the
          * Mass/Density divisions below against a mid-corridor-killed cell. */
         active.enabled          = (kp[i].Mass > 0 && kc[i].Density > 0);
+#ifdef GENERAL_RELATIVITY
+        {
+            /* GR: Vel carries the Eulerian velocity v = (dx/dt + beta)/alpha, FourVelocity = W*v, VelCoord the coordinate velocity of the mesh-generating point */
+            const struct gr_metric *gri = &(kc[i].gr);
+            local.Vel = Vphys(kc[i].VelPred, gri);
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+            local.ParticleVel = Vphys(kc[i].ParticleVel, gri);
+            local.VelCoord = kc[i].ParticleVel;
+#else
+            local.VelCoord = kc[i].VelPred;
+#endif
+            double Wlorentz = lorentz_factor(gri->gamma, local.Vel, gri->limiter); /* (limits Vel in place where required) */
+            local.FourVelocity = Wlorentz*local.Vel;
+            local.RestMassDensity = active.enabled ? gr_get_primitive_density(kc[i].Density, kc[i].VelPred, gri, gri->limiter) : 0;
+        }
+#endif
         local.Pressure          = kc[i].Pressure;
         local.ConditionNumber   = kc[i].ConditionNumber;
 #ifdef MHD_CONSTRAINED_GRADIENT
@@ -252,16 +268,27 @@ struct HydroForceSpec
 #endif
         local.FaceClosureError    = kc[i].FaceClosureError;
         local.InternalEnergyPred  = kc[i].InternalEnergyPred;
+#if defined(GENERAL_RELATIVITY) && defined(GR_ENTROPY_SWITCH)
+        local.Entropy = (local.RestMassDensity > 0) ? local.Pressure / pow(local.RestMassDensity, kc[i].gamma_eos_value()) : 0;
+#endif
         local.SoundSpeed          = kc[i].effective_soundspeed();
         local.dt_hydrostep_i      = get_particle_timestep_in_physical(i, kp);
         local.DrkernNgbFactor     = kp[i].DrkernNgbFactor;
         local.Gradients.Density   = kc[i].Gradients.Density;
         local.Gradients.Pressure  = kc[i].Gradients.Pressure;
         local.Gradients.Velocity  = kc[i].Gradients.Velocity;
+#ifdef GENERAL_RELATIVITY
+        local.Gradients.RestMassDensity = kc[i].Gradients.RestMassDensity;
+#endif
         local.NV_T                = kc[i].NV_T;
         local.TimeBin             = kp[i].TimeBin;
 #ifdef MAGNETIC
         local.BPred       = active.enabled ? kc[i].Bfield() : Vec3<double>{};  /* Bfield() divides by Mass */
+#ifdef GENERAL_RELATIVITY
+        /* GR: BPred carries the primitive (Eulerian) field B^i; (b0, b, b2) the rest-frame field */
+        local.BPred /= kc[i].gr.gdet;
+        {Vec3<double> vtmp = local.Vel; local.b2 = gr_bfield_restframe(&(kc[i].gr), local.BPred, vtmp, &(local.b0), &(local.b), kc[i].gr.limiter);}
+#endif
         local.Gradients.B = kc[i].Gradients.B;
 #ifdef MHD_BATTERY_MECHANISMS
 #if (MHD_BATTERY_MECHANISMS & 1)
@@ -269,7 +296,7 @@ struct HydroForceSpec
         local.Gradients.ElectronTemperature   = kc[i].Gradients.ElectronTemperature;
 #endif
 #endif
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
         local.PhiPred       = active.enabled ? (kc[i].PhiPred / kp[i].Mass) : 0;
         local.Gradients.Phi = kc[i].Gradients.Phi;
 #endif
@@ -452,7 +479,17 @@ struct HydroForceSpec
         kernel.h_i           = active.local.KernelRadius;
         kernel.sound_i       = active.local.SoundSpeed;
         kernel.spec_egy_u_i  = active.local.InternalEnergyPred;
-#ifdef MAGNETIC
+#if defined(MAGNETIC) && defined(GENERAL_RELATIVITY)
+        {
+            /* GR: b^2 in the fluid rest frame and the relativistic Alfven speed v_A^2 = b^2/(rho h + b^2) */
+            kernel.b2_i = active.local.b2;
+            double hstar = active.local.RestMassDensity*(1. + kernel.spec_egy_u_i) + active.local.Pressure + kernel.b2_i;
+            kernel.alfven2_i = kernel.b2_i / hstar;
+        }
+#ifdef GR_ENTROPY_SWITCH
+        if(active.local.Entropy <= 0) { accum.EntropyCheck = 1; }
+#endif
+#elif defined(MAGNETIC)
         {
             double fac_magnetic_pressure_loc = 1.0 / All.cf_atime;
             kernel.b2_i      = active.local.BPred.norm_sq();
@@ -507,6 +544,18 @@ struct HydroForceSpec
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
         MERGE_MAX(MaxKineticEnergyNgb);
 #endif
+#ifdef GENERAL_RELATIVITY
+        MERGE_ADD(DtVolume);
+#ifdef DIVBCLEANING_GR
+        MERGE_MAX(LocalCleaningSpeed); /* the same local value on every rank that evaluated pairs of i */
+#endif
+#ifdef GR_ENTROPY_SWITCH
+        MERGE_MAX(EntropyCheck);
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+        MERGE_ADD(DtEntropy);
+#endif
+#endif
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         MERGE_ADD(DtMass);
         MERGE_ADD(dMass);
@@ -538,11 +587,14 @@ struct HydroForceSpec
         for(int kv = 0; kv < 3; kv++) { dst.Face_Area[kv] += src.Face_Area[kv]; }
         for(int kv = 0; kv < 3; kv++) { dst.DtB[kv] += src.DtB[kv]; }
         MERGE_ADD(divB);
-#if defined(DIVBCLEANING_DEDNER)
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         MERGE_ADD(DtPhi);
 #endif
         for(int kv = 0; kv < 3; kv++) { dst.DtB_PhiCorr[kv] += src.DtB_PhiCorr[kv]; }
+#ifdef DIVBCLEANING_GR
+        for(int kv = 0; kv < 3; kv++) { dst.MeanPhi_PhiCorr[kv] += src.MeanPhi_PhiCorr[kv]; }
+#endif
 #endif
 #endif
 #ifdef COSMIC_RAY_FLUID

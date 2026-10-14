@@ -225,8 +225,15 @@ void GradientsSpec::apply_active_writeback(const neighbor_loop_args& args,
         MIN_ADD(passer[i].Minima.Density,  out->Minima.Density,  0);
         MAX_ADD(passer[i].Maxima.Pressure, out->Maxima.Pressure, 0);
         MIN_ADD(passer[i].Minima.Pressure, out->Minima.Pressure, 0);
+#ifdef GENERAL_RELATIVITY
+        MAX_ADD(passer[i].Maxima.RestMassDensity, out->Maxima.RestMassDensity, 0);
+        MIN_ADD(passer[i].Minima.RestMassDensity, out->Minima.RestMassDensity, 0);
+#endif
         for(k = 0; k < 3; k++) {
             ASSIGN_ADD_PRESET(CellP[i].Gradients.Density[k],  out->Gradients[k].Density,  0);
+#ifdef GENERAL_RELATIVITY
+            ASSIGN_ADD_PRESET(CellP[i].Gradients.RestMassDensity[k], out->Gradients[k].RestMassDensity, 0);
+#endif
             ASSIGN_ADD_PRESET(CellP[i].Gradients.Pressure[k], out->Gradients[k].Pressure, 0);
         }
 #ifdef DOGRAD_INTERNAL_ENERGY
@@ -293,7 +300,7 @@ void GradientsSpec::apply_active_writeback(const neighbor_loop_args& args,
 #endif
             }
         }
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
         MAX_ADD(passer[i].Maxima.Phi, out->Maxima.Phi, 0);
         MIN_ADD(passer[i].Minima.Phi, out->Minima.Phi, 0);
 #ifndef MHD_CONSTRAINED_GRADIENT_MIDPOINT
@@ -489,6 +496,9 @@ void hydro_gradient_calc(void)
         CellP[i].Gradients.Density  = {};
         CellP[i].Gradients.Pressure = {};
         CellP[i].Gradients.Velocity = {};
+#ifdef GENERAL_RELATIVITY
+        CellP[i].Gradients.RestMassDensity = {};
+#endif
 #ifdef DOGRAD_INTERNAL_ENERGY
         CellP[i].Gradients.InternalEnergy = {};
 #endif
@@ -511,7 +521,7 @@ void hydro_gradient_calc(void)
 #else
         CellP[i].Face_Area = {};
 #endif
-#if defined(DIVBCLEANING_DEDNER) && !defined(MHD_CONSTRAINED_GRADIENT_MIDPOINT)
+#if (defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)) && !defined(MHD_CONSTRAINED_GRADIENT_MIDPOINT)
         CellP[i].Gradients.Phi = {};
 #endif
 #endif
@@ -775,6 +785,9 @@ void hydro_gradient_calc(void)
         if(P[i].Type != 0) continue;
         int k, k1;
         construct_gradient(CellP[i].Gradients.Density, i);
+#ifdef GENERAL_RELATIVITY
+        construct_gradient(CellP[i].Gradients.RestMassDensity, i);
+#endif
         construct_gradient(CellP[i].Gradients.Pressure, i);
         for(k = 0; k < 3; k++) { construct_gradient(CellP[i].Gradients.Velocity[k], i); }
 #ifdef TURB_DIFF_DYNAMIC
@@ -802,7 +815,7 @@ void hydro_gradient_calc(void)
 #ifndef MHD_CONSTRAINED_GRADIENT
         for(k = 0; k < 3; k++) { construct_gradient(CellP[i].Gradients.B[k], i); }
 #endif
-#if defined(DIVBCLEANING_DEDNER) && !defined(MHD_CONSTRAINED_GRADIENT_MIDPOINT)
+#if (defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)) && !defined(MHD_CONSTRAINED_GRADIENT_MIDPOINT)
         construct_gradient(CellP[i].Gradients.Phi, i);
 #endif
 #endif
@@ -991,6 +1004,10 @@ void hydro_gradient_calc(void)
 #if (SINGLE_STAR_SINK_FORMATION & 4)
             CellP[i].Density_Relative_Maximum_in_Kernel = passer_base[i].Maxima.Density;
 #endif
+#ifdef GENERAL_RELATIVITY
+            local_slopelimiter(CellP[i].Gradients.RestMassDensity, passer_base[i].Maxima.RestMassDensity, passer_base[i].Minima.RestMassDensity,
+                               a_limiter, h_lim, 0., 1, d_max, gr_get_primitive_density(CellP[i].Density, CellP[i].VelPred, &(CellP[i].gr), CellP[i].gr.limiter));
+#endif
             local_slopelimiter(CellP[i].Gradients.Density, passer_base[i].Maxima.Density, passer_base[i].Minima.Density,
                                a_limiter, h_lim, 0, 1, d_max, CellP[i].Density);
             int pressure_is_positive_definite = 1;
@@ -1089,8 +1106,15 @@ void hydro_gradient_calc(void)
 #ifndef MHD_CONSTRAINED_GRADIENT
             {
                 double v_tmp = P[i].Mass / CellP[i].Density;
+#ifdef GENERAL_RELATIVITY
+                /* GR: use the rest-frame magnetic field b^2 */
+                double b0_tmp, b2_tmp; Vec3<double> b_tmp, Vel_tmp = Vphys(CellP[i].VelPred, &(CellP[i].gr));
+                b2_tmp = gr_bfield_restframe(&(CellP[i].gr), CellP[i].Bfield()/CellP[i].gr.gdet, Vel_tmp, &b0_tmp, &b_tmp, CellP[i].gr.limiter);
+                double tmp_d = sqrt(1.0e-37 + (2. * All.cf_atime * CellP[i].Pressure * v_tmp * v_tmp) + (b2_tmp * v_tmp * v_tmp));
+#else
                 double tmp_d = sqrt(1.0e-37 + (2. * All.cf_atime / CellP[i].Pressure * v_tmp * v_tmp)
                                     + CellP[i].BPred.norm_sq());
+#endif
                 double q = fabs(CellP[i].divB) * P[i].KernelRadius / tmp_d;
                 double alim2 = a_limiter * (1. + q * q);
                 if(alim2 > 0.5) alim2 = 0.5;
@@ -1105,7 +1129,7 @@ void hydro_gradient_calc(void)
                 }
             }
 #endif
-#if defined(DIVBCLEANING_DEDNER) && !defined(MHD_CONSTRAINED_GRADIENT_MIDPOINT)
+#if (defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)) && !defined(MHD_CONSTRAINED_GRADIENT_MIDPOINT)
             local_slopelimiter(CellP[i].Gradients.Phi,
                                passer_base[i].Maxima.Phi, passer_base[i].Minima.Phi,
                                a_limiter, h_lim, stol, 0, 0, 0);

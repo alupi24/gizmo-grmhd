@@ -50,10 +50,13 @@ struct Quantities_for_Gradients
 {
     MyDouble Density;
     MyDouble Pressure;
-    Vec3<MyDouble> Velocity;
+    Vec3<MyDouble> Velocity;        /*!< GR: the spatial four-velocity W*v (v = Eulerian velocity) */
+#ifdef GENERAL_RELATIVITY
+    MyDouble RestMassDensity;
+#endif
 #ifdef MAGNETIC
-    Vec3<MyDouble> B;
-#ifdef DIVBCLEANING_DEDNER
+    Vec3<MyDouble> B;               /*!< GR: the primitive field B^i */
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
     MyDouble Phi;
 #endif
 #endif
@@ -423,11 +426,21 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
 
     double d_rho = CellP[j].Density - local->GQuant.Density;
     MINMAX_CHECK(d_rho, out->Minima.Density, out->Maxima.Density);
+#ifdef GENERAL_RELATIVITY
+    double d_grrho = gr_get_primitive_density(CellP[j].Density, CellP[j].VelPred, &(CellP[j].gr), CellP[j].gr.limiter) - local->GQuant.RestMassDensity;
+    MINMAX_CHECK(d_grrho, out->Minima.RestMassDensity, out->Maxima.RestMassDensity);
+#endif
 
     double dp_pres = CellP[j].Pressure - local->GQuant.Pressure;
     MINMAX_CHECK(dp_pres, out->Minima.Pressure, out->Maxima.Pressure);
 
+#ifdef GENERAL_RELATIVITY
+    /* GR: differences of the spatial four-velocity W*v (v = Eulerian velocity) */
+    Vec3<MyDouble> dv = Vphys(CellP[j].VelPred, &(CellP[j].gr));
+    {double Wlorentz_j = lorentz_factor(CellP[j].gr.gamma, dv, CellP[j].gr.limiter); dv = Wlorentz_j*dv - local->GQuant.Velocity;}
+#else
     auto dv = CellP[j].VelPred - local->GQuant.Velocity;
+#endif
     NGB_SHEARBOX_BOUNDARY_VELCORR_(local->Pos, P[j].Pos, dv, -1);
     for(int k=0;k<3;k++) {
         MINMAX_CHECK(dv[k], out->Minima.Velocity[k], out->Maxima.Velocity[k]);
@@ -500,12 +513,15 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
 
 #ifdef MAGNETIC
     Vec3<double> Bj = CellP[j].BPred * (CellP[j].Density / P[j].Mass);
+#ifdef GENERAL_RELATIVITY
+    Bj /= CellP[j].gr.gdet; /* GR: gradients of the primitive field B^i */
+#endif
     NGB_SHEARBOX_BOUNDARY_BCORR_(local->Pos, P[j].Pos, Bj, -1);
     Vec3<double> dB = Bj - local->GQuant.B;
     for(int k=0;k<3;k++) { MINMAX_CHECK(dB[k], out->Minima.B[k], out->Maxima.B[k]); }
 #endif
 
-#if defined(DIVBCLEANING_DEDNER) && !defined(MHD_CONSTRAINED_GRADIENT_MIDPOINT)
+#if (defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)) && !defined(MHD_CONSTRAINED_GRADIENT_MIDPOINT)
     {
         double dphi = CellP[j].PhiPred / P[j].Mass - local->GQuant.Phi;
         MINMAX_CHECK(dphi, out->Minima.Phi, out->Maxima.Phi);
@@ -575,6 +591,9 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
         {
             double wk_xyz_i = -wk_for_grad * kernel->dp[k];
             out->Gradients[k].Density += wk_xyz_i * d_rho;
+#ifdef GENERAL_RELATIVITY
+            out->Gradients[k].RestMassDensity += wk_xyz_i * d_grrho;
+#endif
             out->Gradients[k].Pressure += wk_xyz_i * dp_pres;
             out->Gradients[k].Velocity += wk_xyz_i * dv;
 #ifdef TURB_DIFF_DYNAMIC
@@ -597,7 +616,7 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
 #endif
 #ifdef MAGNETIC
             out->Gradients[k].B += wk_xyz_i * dB;
-#if defined(DIVBCLEANING_DEDNER) && !defined(MHD_CONSTRAINED_GRADIENT_MIDPOINT)
+#if (defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)) && !defined(MHD_CONSTRAINED_GRADIENT_MIDPOINT)
             {double dphi_loc = CellP[j].PhiPred / P[j].Mass - local->GQuant.Phi;
              out->Gradients[k].Phi += wk_xyz_i * dphi_loc;}
 #endif

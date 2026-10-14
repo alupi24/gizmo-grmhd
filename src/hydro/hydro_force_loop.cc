@@ -301,6 +301,18 @@ void HydroForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
 
     CellP[i].HydroAccel       += out->Acc;
     CellP[i].DtInternalEnergy += out->DtInternalEnergy;
+#ifdef GENERAL_RELATIVITY
+    CellP[i].DtVolume += out->DtVolume;
+#ifdef DIVBCLEANING_GR
+    CellP[i].CleaningSpeed = out->LocalCleaningSpeed; /* Route B: local value */
+#endif
+#ifdef GR_ENTROPY_SWITCH
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+    CellP[i].DtEntropy += out->DtEntropy;
+#endif
+    if(out->EntropyCheck) { CellP[i].Entropy = 0; }
+#endif
+#endif
 #if defined(TWO_TEMPERATURE_PLASMA) && (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
     CellP[i].DtInternalEnergy_FromConduction += out->DtInternalEnergy_FromConduction;
 #endif
@@ -353,11 +365,14 @@ void HydroForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
     CellP[i].DtB       += out->DtB;
     CellP[i].Face_Area += out->Face_Area;
     CellP[i].divB      += out->divB;
-#if defined(DIVBCLEANING_DEDNER)
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     CellP[i].DtPhi += out->DtPhi;
 #endif
     CellP[i].DtB_PhiCorr += out->DtB_PhiCorr;
+#ifdef DIVBCLEANING_GR
+    CellP[i].MeanPhi_PhiCorr += out->MeanPhi_PhiCorr;
+#endif
 #endif
 #endif
 #ifdef COSMIC_RAY_FLUID
