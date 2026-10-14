@@ -619,6 +619,22 @@ integertime get_timestep(int p,		/*!< particle index */
              tau += CellP[p].gr.gdet*(-0.5*b[4] - b[0]*b[0]);
 #endif
              dt = DMIN(dt,0.1*tau/fabs(CellP[p].DtEnergy)*Vi);
+             /* the same check on the conserved momentum S_j = D h* W v_j - sqrt(gamma) b^0 b_j (gr_get_conservative_variables): the change of
+                |S| = sqrt(gamma^ij S_i S_j) per step is limited to 10% of |S|. Near c this bounds the relative change of the Lorentz factor
+                (dW/W ~ W^2 v.dv), which neither the Courant condition (normal approach speeds only) nor the acceleration criterion controls;
+                |S| is floored at 10% of the total energy tau+D (|S| <= tau+D), so that gas at rest is limited on the energy scale instead */
+             {
+              double vcov[3], S[3], *dS = CellP[p].DtMomentum, *ug = CellP[p].gr.ugamma;
+              raise_lower_indices(CellP[p].gr.gamma,vphys,vcov);
+              for(k=0;k<3;k++) {S[k] = CellP[p].Density*hstar*Wl*vcov[k];}
+#ifdef MAGNETIC
+              for(k=0;k<3;k++) {S[k] -= CellP[p].gr.gdet*b[0]*b[k+1];}
+#endif
+              double S2 = ug[0]*S[0]*S[0] + ug[3]*S[1]*S[1] + ug[5]*S[2]*S[2] + 2.*(ug[1]*S[0]*S[1] + ug[2]*S[0]*S[2] + ug[4]*S[1]*S[2]);
+              double dS2 = ug[0]*dS[0]*dS[0] + ug[3]*dS[1]*dS[1] + ug[5]*dS[2]*dS[2] + 2.*(ug[1]*dS[0]*dS[1] + ug[2]*dS[0]*dS[2] + ug[4]*dS[1]*dS[2]);
+              double S_scale = DMAX(sqrt(DMAX(S2,0.)), 0.1*(tau + CellP[p].Density));
+              if(dS2 > 0) {dt = DMIN(dt, 0.1*S_scale*Vi/sqrt(dS2));}
+             }
             }
 #endif
 
