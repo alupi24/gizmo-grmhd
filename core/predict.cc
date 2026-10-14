@@ -556,7 +556,7 @@ double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id)
     /* parabolic damping of psihat: rate = alpha*sigma*c_h with sigma = K/Delta_x (Fedrigo & Lupi 2025), using the Route B cleaning speed of the particle */
     return KAPPA_CLEANING*CellP[i_particle_id].gr.alpha*CellP[i_particle_id].CleaningSpeed/Get_Particle_Size(i_particle_id);
 #else
-    return KAPPA_CLEANING_LEGACY*CellP[i_particle_id].gr.alpha*fabs(0.5*CellP[i_particle_id].MaxSignalVel); /* old live branch (no 1/Delta_x) */
+    return KAPPA_CLEANING_LEGACY*CellP[i_particle_id].gr.alpha*fabs(0.5*CellP[i_particle_id].MaxSignalVel)/Get_Particle_Size(i_particle_id); /* pre-Route-B scheme of Fedrigo & Lupi (2025) */
 #endif
 #else
 #ifdef HYDRO_SPH

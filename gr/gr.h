@@ -26,17 +26,17 @@
    c_h = v_ms (1+f)/(1+f v_ms^2) from the local magnetosonic speed (Fedrigo & Lupi 2025), capped at the speed of light;
    each particle uses its local value (SphP.CleaningSpeed), faces use the maximum over the pair.
    KAPPA_CLEANING is the dimensionless damping constant K: damping rate = alpha*K*c_h/Delta_x. */
-#define KAPPA_CLEANING (0.1)  /* K of Fedrigo & Lupi (2025); the previous live branch used 1000 without the 1/Delta_x */
+#define KAPPA_CLEANING (0.1)  /* K of Fedrigo & Lupi (2025); the pre-Route-B scheme (GR_CLEANING_LEGACY) uses the same K with MaxSignalVel/2 in place of c_h */
 #define SIGMAH (1.0)          /* multiplier of the hyperbolic source -alpha*c_h*D*divB */
 #define VEL_CLEANING (1.0)    /* f: relativistic boost of the magnetosonic speed */
 #ifndef GR_CLEANING_LEGACY
 static inline double gr_cleaning_speed(double vms) {double ch = vms*(1.+VEL_CLEANING)/(1.+VEL_CLEANING*vms*vms); if(ch > 1.) {ch = 1.;} if(ch < 0.) {ch = 0.;} return ch;}
 #else
 /* GR_CLEANING_LEGACY: regression mode reproducing the pre-Route-B scheme with the same binary: light-speed cleaning states in the solver
-   (c_h = 1 everywhere, so all Route B terms vanish), the old damping rate KAPPA_CLEANING_LEGACY*alpha*(MaxSignalVel/2) without 1/Delta_x,
+   (c_h = 1 everywhere, so all Route B terms vanish), the old damping rate KAPPA_CLEANING_LEGACY*alpha*(MaxSignalVel/2)/Delta_x (as in Fedrigo & Lupi 2025),
    and the old relativistic boost of the fluid signal velocity for the time step. HLL and GForce are reproduced exactly; the old HLLC
    carried inconsistent c_h^2 factors and is not reproduced. */
-#define KAPPA_CLEANING_LEGACY (1000)
+#define KAPPA_CLEANING_LEGACY (0.1)
 static inline double gr_cleaning_speed(double vms) {return 1.;}
 #endif
 #endif
