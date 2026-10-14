@@ -667,14 +667,14 @@ integertime get_timestep(int p,		/*!< particle index */
                 double rho = gr_get_primitive_density(CellP[p].Density, P[p].Vel, gr, gr->limiter);
                 double hstar = 1.0 + CellP[p].InternalEnergy + CellP[p].Pressure/rho, Vi = P[p].Mass/CellP[p].Density;
 #ifdef MAGNETIC
-                double b0, b2; Vec3<double> b, Bprim = CellP[p].B/(Vi*gr->gdet);
-                b2 = gr_bfield_restframe(gr, Bprim, vphys, &b0, &b, gr->limiter);
+                double ab0, b2; Vec3<double> b, Bprim = CellP[p].B/(Vi*gr->gdet);
+                b2 = gr_bfield_restframe(gr, Bprim, vphys, &ab0, &b, gr->limiter);
                 hstar += b2/rho;
 #endif
                 double Wl = lorentz_factor(gr->gamma, vphys, gr->limiter);
                 double tau = CellP[p].Density*hstar*Wl - gr->gdet*CellP[p].Pressure - CellP[p].Density;
 #ifdef MAGNETIC
-                tau += gr->gdet*(-0.5*b2 - b0*b0);
+                tau += gr->gdet*(-0.5*b2 - ab0*ab0);
 #endif
                 dt = DMIN(dt, 0.1*tau/fabs(CellP[p].DtEnergy)*Vi);
                 /* the same check on the conserved momentum S_j = D h* W v_j - sqrt(gamma) b^0 b_j: the change of |S| = sqrt(gamma^ij S_i S_j) per step is limited
@@ -683,7 +683,7 @@ integertime get_timestep(int p,		/*!< particle index */
                 {
                     Vec3<double> S = (CellP[p].Density*hstar*Wl)*gr->gamma.matvec(vphys);
 #ifdef MAGNETIC
-                    S -= (gr->gdet*b0)*b;
+                    S -= (gr->gdet*ab0)*b;
 #endif
                     double S2 = gr->ugamma.quad(S), dS2 = gr->ugamma.quad(CellP[p].DtMomentum);
                     double S_scale = DMAX(sqrt(DMAX(S2, 0.)), 0.1*(tau + CellP[p].Density));

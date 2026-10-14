@@ -205,8 +205,8 @@ void hydro_accumulate_neighbor(
 #if defined(MAGNETIC) && defined(GENERAL_RELATIVITY)
     /* GR: b^2 in the fluid rest frame, relativistic Alfven speed v_A^2 = b^2/(rho h + b^2) and magnetosonic speed^2 = c_s^2 (1-v_A^2) + v_A^2 */
     {
-        double b0_j; Vec3<double> b_j, vtmp_j = VelPred_j;
-        kernel.b2_j = gr_bfield_restframe(gr_j, BPred_j, vtmp_j, &b0_j, &b_j, grj.gr_limiter_j);
+        double ab0_j; Vec3<double> b_j, vtmp_j = VelPred_j;
+        kernel.b2_j = gr_bfield_restframe(gr_j, BPred_j, vtmp_j, &ab0_j, &b_j, grj.gr_limiter_j);
     }
     double hstar_j = gr_get_primitive_density(CellP[j].Density, CellP[j].VelPred, gr_j, grj.gr_limiter_j)*(1. + CellP[j].InternalEnergyPred) + CellP[j].Pressure + kernel.b2_j;
     kernel.alfven2_j = kernel.b2_j / hstar_j;

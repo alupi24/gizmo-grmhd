@@ -85,7 +85,7 @@ struct hydro_data_in
     MyFloat Entropy;
 #endif
 #ifdef MAGNETIC
-    MyFloat b0;                     /*!< alpha b^0 of the rest-frame field (BPred holds the primitive Eulerian field B^i) */
+    MyFloat ab0;                     /*!< alpha b^0 of the rest-frame field (BPred holds the primitive Eulerian field B^i) */
     Vec3<MyFloat> b;                /*!< covariant rest-frame field b_i */
     MyFloat b2;                     /*!< b^mu b_mu */
 #endif

@@ -1108,8 +1108,8 @@ void hydro_gradient_calc(void)
                 double v_tmp = P[i].Mass / CellP[i].Density;
 #ifdef GENERAL_RELATIVITY
                 /* GR: use the rest-frame magnetic field b^2 */
-                double b0_tmp, b2_tmp; Vec3<double> b_tmp, Vel_tmp = Vphys(CellP[i].VelPred, &(CellP[i].gr));
-                b2_tmp = gr_bfield_restframe(&(CellP[i].gr), CellP[i].Bfield()/CellP[i].gr.gdet, Vel_tmp, &b0_tmp, &b_tmp, CellP[i].gr.limiter);
+                double ab0_tmp, b2_tmp; Vec3<double> b_tmp, Vel_tmp = Vphys(CellP[i].VelPred, &(CellP[i].gr));
+                b2_tmp = gr_bfield_restframe(&(CellP[i].gr), CellP[i].Bfield()/CellP[i].gr.gdet, Vel_tmp, &ab0_tmp, &b_tmp, CellP[i].gr.limiter);
                 double tmp_d = sqrt(1.0e-37 + (2. * All.cf_atime * CellP[i].Pressure * v_tmp * v_tmp) + (b2_tmp * v_tmp * v_tmp));
 #else
                 double tmp_d = sqrt(1.0e-37 + (2. * All.cf_atime / CellP[i].Pressure * v_tmp * v_tmp)

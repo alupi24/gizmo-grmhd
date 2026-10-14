@@ -285,9 +285,9 @@ struct HydroForceSpec
 #ifdef MAGNETIC
         local.BPred       = active.enabled ? kc[i].Bfield() : Vec3<double>{};  /* Bfield() divides by Mass */
 #ifdef GENERAL_RELATIVITY
-        /* GR: BPred carries the primitive (Eulerian) field B^i; (b0, b, b2) the rest-frame field */
+        /* GR: BPred carries the primitive (Eulerian) field B^i; (ab0, b, b2) the rest-frame field */
         local.BPred /= kc[i].gr.gdet;
-        {Vec3<double> vtmp = local.Vel; local.b2 = gr_bfield_restframe(&(kc[i].gr), local.BPred, vtmp, &(local.b0), &(local.b), kc[i].gr.limiter);}
+        {Vec3<double> vtmp = local.Vel; local.b2 = gr_bfield_restframe(&(kc[i].gr), local.BPred, vtmp, &(local.ab0), &(local.b), kc[i].gr.limiter);}
 #endif
         local.Gradients.B = kc[i].Gradients.B;
 #ifdef MHD_BATTERY_MECHANISMS

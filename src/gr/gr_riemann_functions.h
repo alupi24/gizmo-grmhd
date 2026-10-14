@@ -34,7 +34,7 @@ struct gr_face_state
     Vec3<double> vcoord;   /*!< coordinate velocity alpha v - beta */
     double W;              /*!< Lorentz factor */
 #ifdef MAGNETIC
-    double b0;             /*!< alpha b^0 */
+    double ab0;             /*!< alpha b^0 */
     Vec3<double> b;        /*!< covariant rest-frame field b_i */
     double bsq;
     double vA;             /*!< relativistic Alfven speed */
@@ -82,8 +82,8 @@ KOKKOS_INLINE_FUNCTION void gr_face_state_from_primitives(const struct Conserved
     st->W = lorentz_factor(gr->gamma, prims.v, gr_limiter);
 #ifdef MAGNETIC
     prims.B = side.B; prims.B[0] = B_normal; /* the face-normal field is the common corrected value (x is the normal in the rotated frame) */
-    prims.bsq = gr_bfield_restframe(gr, prims.B, prims.v, &prims.b0, &prims.b, gr_limiter);
-    st->b0 = prims.b0; st->b = prims.b; st->bsq = prims.bsq;
+    prims.bsq = gr_bfield_restframe(gr, prims.B, prims.v, &prims.ab0, &prims.b, gr_limiter);
+    st->ab0 = prims.ab0; st->b = prims.b; st->bsq = prims.bsq;
     st->vA = sqrt(prims.bsq/(prims.rho0*(1+prims.u) + (prims.p + prims.bsq)));
 #endif
     gr_get_conservative_variables(&prims, &(st->cons), st->W, gr);
@@ -98,7 +98,7 @@ KOKKOS_INLINE_FUNCTION void gr_mhd_physical_flux(const struct gr_face_state *st,
     const struct gr_conservatives &U = st->cons;
     double vx = st->vcoord[0], Bx_over_W = U.B[0]/st->W, agp = gr->alpha*gr->gdet*U.p;
     flux->D   = U.D*vx;
-    flux->tau = U.tau*vx + gr->gdet*U.p*(vx + beta_n) - gr->alpha*st->b0*Bx_over_W;
+    flux->tau = U.tau*vx + gr->gdet*U.p*(vx + beta_n) - gr->alpha*st->ab0*Bx_over_W;
     flux->S   = vx*U.S - (gr->alpha*Bx_over_W)*st->b;
     flux->S[0] += agp;
     flux->B   = vx*U.B - U.B[0]*st->vcoord;
@@ -226,12 +226,12 @@ KOKKOS_INLINE_FUNCTION void gr_mhd_riemann_gforce(const struct Input_vec_Riemann
 #endif
     struct gr_primitives prims; /* the right state as the initial guess of the inversion */
     prims.rho0 = Riemann_vec.R.rho; prims.v = R.v; prims.u = Riemann_vec.R.u; prims.p = Riemann_vec.R.p;
-    prims.B = R.cons.B/gr->gdet; prims.b0 = R.b0; prims.b = R.b; prims.bsq = R.bsq;
+    prims.B = R.cons.B/gr->gdet; prims.ab0 = R.ab0; prims.b = R.b; prims.bsq = R.bsq;
     double res_con2prim = gr_get_primitive_variables(&(LW.cons), &prims, gr, gr_limiter);
     if(res_con2prim < 0) {Riemann_out->P_M = -1; return;} /* the caller retries with lower-order states */
     LW.vcoord = Vcoord(prims.v, gr);
     LW.W = lorentz_factor(gr->gamma, prims.v, gr_limiter);
-    LW.bsq = gr_bfield_restframe(gr, prims.B, prims.v, &(LW.b0), &(LW.b), gr_limiter);
+    LW.bsq = gr_bfield_restframe(gr, prims.B, prims.v, &(LW.ab0), &(LW.b), gr_limiter);
     LW.v = prims.v;
     LW.cons.p = prims.p + 0.5*LW.bsq; /* total pressure of the Lax-Wendroff state */
     struct gr_conservatives fluxLW;

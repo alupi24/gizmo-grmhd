@@ -30,7 +30,7 @@ KOKKOS_INLINE_FUNCTION void gr_source_term(int i, struct gr_primitives *prims, s
     double u0 = Wfac/alpha;
     Vec3<double> u_sp = Wfac*(prims->v - gr->beta/alpha);
 #ifdef MAGNETIC
-    /* contravariant rest-frame field b^mu = (W v.B/alpha, B/W + (v.B) u^i) [note: this b^0 is the true component; the b0 stored in
+    /* contravariant rest-frame field b^mu = (W v.B/alpha, B/W + (v.B) u^i) [note: this b^0 is the true component; the ab0 stored in
        gr_primitives and the face states is alpha*b^0], total enthalpy and pressure */
     double vdotB = dot(gr->gamma.matvec(prims->v), prims->B);
     rhoh += prims->bsq; Pstar += 0.5*prims->bsq;
@@ -129,7 +129,7 @@ KOKKOS_INLINE_FUNCTION double gr_primitives_of_cell(int i, const Vec3<double> &v
     Prims->p = gr_pressure_rho0_u(Prims->rho0, Prims->u);
 #ifdef MAGNETIC
     Prims->B = BV/(Vi*gr->gdet);
-    Prims->bsq = gr_bfield_restframe(gr, Prims->B, Prims->v, &(Prims->b0), &(Prims->b), gr->limiter);
+    Prims->bsq = gr_bfield_restframe(gr, Prims->B, Prims->v, &(Prims->ab0), &(Prims->b), gr->limiter);
 #else
     (void)BV;
 #endif

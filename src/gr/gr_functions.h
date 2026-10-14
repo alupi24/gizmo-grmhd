@@ -222,8 +222,8 @@ KOKKOS_INLINE_FUNCTION void gr_get_conservative_variables(const struct gr_primit
 #ifdef MAGNETIC
     cons->B = gdet*prims->B;
     Pstar += prims->bsq/2; hstar += prims->bsq/prims->rho0;
-    cons->S = (-gdet*prims->b0)*prims->b;
-    cons->tau = -gdet*prims->b0*prims->b0;
+    cons->S = (-gdet*prims->ab0)*prims->b;
+    cons->tau = -gdet*prims->ab0*prims->ab0;
 #endif
     double DhW = cons->D*Wlorentz*hstar;
     cons->S += DhW*v_cov;
@@ -233,15 +233,15 @@ KOKKOS_INLINE_FUNCTION void gr_get_conservative_variables(const struct gr_primit
 }
 
 #ifdef MAGNETIC
-/* rest-frame field of the Eulerian field B (primitive) and the Eulerian velocity vphys (contravariant): fills b0 = alpha b^0 and the
+/* rest-frame field of the Eulerian field B (primitive) and the Eulerian velocity vphys (contravariant): fills ab0 = alpha b^0 and the
    covariant b_i, returns b^2 = b^mu b_mu. vphys may be limited in place (gr_limiter). */
-KOKKOS_INLINE_FUNCTION double gr_bfield_restframe(const struct gr_metric *gr, const Vec3<double> &B, Vec3<double> &vphys, double *b0, Vec3<double> *b, int gr_limiter)
+KOKKOS_INLINE_FUNCTION double gr_bfield_restframe(const struct gr_metric *gr, const Vec3<double> &B, Vec3<double> &vphys, double *ab0, Vec3<double> *b, int gr_limiter)
 {
     double Wl = lorentz_factor(gr->gamma, vphys, gr_limiter);
     double bmag = dot(B, gr->gamma.matvec(vphys)); /* B^i v_i */
-    *b0 = Wl*bmag;
+    *ab0 = Wl*bmag;
     Vec3<double> tmp = B/Wl + (Wl*bmag)*(vphys - gr->beta/gr->alpha);
-    *b = gr->gamma.matvec(tmp) + ((*b0)/gr->alpha)*gr->gamma.matvec(gr->beta);
+    *b = gr->gamma.matvec(tmp) + ((*ab0)/gr->alpha)*gr->gamma.matvec(gr->beta);
     return bmag*bmag + gr->gamma.quad(B)/Wl/Wl;
 }
 

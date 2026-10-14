@@ -86,7 +86,7 @@ struct gr_primitives
     double u;                         /*!< specific internal energy */
     double p;                         /*!< gas pressure */
 #ifdef MAGNETIC
-    double b0;                        /*!< alpha b^0 of the rest-frame field (b^0 always appears multiplied by the lapse) */
+    double ab0;                        /*!< alpha b^0 of the rest-frame field (b^0 always appears multiplied by the lapse) */
     Vec3<double> b;                   /*!< covariant spatial rest-frame field b_i */
     double bsq;                       /*!< b^mu b_mu */
     Vec3<double> B;                   /*!< Eulerian field B^i (primitive, not densitized) */
