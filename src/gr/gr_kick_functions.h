@@ -17,53 +17,44 @@
 #define GR_KICK_FUNCTIONS_H
 #ifdef GENERAL_RELATIVITY
 
-/* metric source terms of the momentum and energy equations at cell i, from the stress-energy tensor T^{mu nu} of the primitives
-   (v may be limited in place where required) */
+/* metric source terms of the momentum and energy equations at cell i, from the stress-energy tensor of the primitives
+   (v may be limited in place where required): S_j: (alpha sqrt(gamma)/2) T^{mu nu} d_j g_{mu nu};
+   tau: alpha sqrt(gamma) [T^{mu nu} K_ij-terms - (T^00 beta^j + T^0j) d_j alpha], with K_ij = -alpha Gamma^0_ij */
 KOKKOS_INLINE_FUNCTION void gr_source_term(int i, struct gr_primitives *prims, struct gr_conservatives *Src, struct particle_data *pp, struct gas_cell_data *cell)
 {
     const struct gr_metric *gr = &(cell[i].gr);
     const double alpha = gr->alpha, alphainv2 = 1./(alpha*alpha);
-    double Tmunu[4][4], ucon[4];
     double Pstar = prims->p, rhoh = prims->rho0*(1 + prims->u) + prims->p;
     double Wfac = lorentz_factor(gr->gamma, prims->v, gr->limiter);
-    ucon[0] = Wfac/alpha; /* four-velocity; v is the velocity seen by the Eulerian observer */
-    for(int j = 0; j < 3; j++) {ucon[j+1] = Wfac*(prims->v[j] - gr->beta[j]/alpha);}
+    /* four-velocity u^mu = (W/alpha, W (v - beta/alpha)); v is the velocity seen by the Eulerian observer */
+    double u0 = Wfac/alpha;
+    Vec3<double> u_sp = Wfac*(prims->v - gr->beta/alpha);
 #ifdef MAGNETIC
-    double b_con[4], vdotB = dot(gr->gamma.matvec(prims->v), prims->B);
+    /* contravariant rest-frame field b^mu = (W v.B/alpha, B/W + (v.B) u^i) [note: this b^0 is the true component; the b0 stored in
+       gr_primitives and the face states is alpha*b^0], total enthalpy and pressure */
+    double vdotB = dot(gr->gamma.matvec(prims->v), prims->B);
     rhoh += prims->bsq; Pstar += 0.5*prims->bsq;
-    b_con[0] = Wfac*vdotB/alpha;
-    for(int j = 0; j < 3; j++) {b_con[j+1] = prims->B[j]/Wfac + vdotB*ucon[j+1];}
+    double bcon0 = Wfac*vdotB/alpha;
+    Vec3<double> bcon_sp = prims->B/Wfac + vdotB*u_sp;
 #endif
-    for(int j = 0; j < 4; j++) {for(int k = 0; k < 4; k++)
-    {
-        Tmunu[j][k] = rhoh*ucon[j]*ucon[k];
+    /* T^{mu nu} = rho h u u - b b + P* g^{mu nu}, with g^00 = -1/alpha^2, g^0i = beta^i/alpha^2, g^ij = gamma^ij - beta^i beta^j/alpha^2 */
+    struct gr_sym4 T;
+    T.tt = rhoh*u0*u0 - Pstar*alphainv2;
+    T.ti = (rhoh*u0)*u_sp + (Pstar*alphainv2)*gr->beta;
+    T.ij = rhoh*outer_product(u_sp) + Pstar*(gr->ugamma - alphainv2*outer_product(gr->beta));
 #ifdef MAGNETIC
-        Tmunu[j][k] -= b_con[j]*b_con[k];
+    T.tt -= bcon0*bcon0; T.ti -= bcon0*bcon_sp; T.ij -= outer_product(bcon_sp);
 #endif
-    }}
-    /* the pressure term P g^{mu nu}: g^00 = -1/alpha^2, g^0i = beta^i/alpha^2, g^ij = gamma^ij - beta^i beta^j/alpha^2 */
-    Tmunu[0][0] += -Pstar*alphainv2;
-    for(int j = 0; j < 3; j++) {Tmunu[0][j+1] = Tmunu[j+1][0] = Tmunu[0][j+1] + Pstar*gr->beta[j]*alphainv2;}
-    for(int j = 0; j < 3; j++) {for(int k = j; k < 3; k++) {Tmunu[j+1][k+1] = Tmunu[k+1][j+1] = Tmunu[j+1][k+1] + Pstar*(gr->ugamma[j][k] - gr->beta[j]*gr->beta[k]*alphainv2);}}
     /* metric derivatives at the cell */
-    SymmetricTensor2<double> Kij; struct gr_metric4 dg[3]; Vec3<double> d_alpha; Mat3<double> d_beta;
+    SymmetricTensor2<double> Kij; struct gr_sym4 dg[3]; Vec3<double> d_alpha; Mat3<double> d_beta;
     get_metric_derivatives(pp[i].Pos, gr, Kij, dg, d_alpha, d_beta);
     Src->D = 0.; /* no mass source */
-    for(int dir = 0; dir < 3; dir++) /* momentum: (alpha sqrt(gamma)/2) T^{mu nu} d_dir g_{mu nu} */
-    {
-        double s = 0;
-        for(int j = 0; j < 4; j++) {for(int k = 0; k < 4; k++) {s += Tmunu[j][k]*gr_metric4_get(&dg[dir], j, k);}}
+    Src->S = (0.5*alpha*gr->gdet)*Vec3<double>{gr_sym4_contract(T, dg[0]), gr_sym4_contract(T, dg[1]), gr_sym4_contract(T, dg[2])};
+    double t = T.tt*Kij.quad(gr->beta) + 2.*dot(T.ti, Kij.matvec(gr->beta)) + Kij.double_contract(T.ij) - dot(T.tt*gr->beta + T.ti, d_alpha);
 #ifndef SELFGRAVITY_OFF
-        s += 2*Tmunu[0][0]*pp[i].GravAccel[dir]; /* Newtonian self-gravity as a metric perturbation */
-#endif
-        Src->S[dir] = 0.5*alpha*gr->gdet*s;
-    }
-    /* energy: alpha sqrt(gamma) [ K_jk (T^00 beta^j beta^k + 2 T^0j beta^k + T^jk) - (T^00 beta^j + T^0j) d_j alpha ], with K_ij = -alpha Gamma^0_ij */
-    double t = 0;
-    for(int j = 0; j < 3; j++) {for(int k = 0; k < 3; k++) {t += Kij[j][k]*(Tmunu[0][0]*gr->beta[j]*gr->beta[k] + 2.0*Tmunu[0][j+1]*gr->beta[k] + Tmunu[j+1][k+1]);}}
-    for(int j = 0; j < 3; j++) {t += (Tmunu[0][0]*gr->beta[j] + Tmunu[0][j+1])*(-d_alpha[j]);}
-#ifndef SELFGRAVITY_OFF
-    for(int j = 0; j < 3; j++) {t += (Tmunu[0][0]*gr->beta[j] + Tmunu[0][j+1])*pp[i].GravAccel[j]/alpha;}
+    /* Newtonian self-gravity as a metric perturbation */
+    Src->S += (alpha*gr->gdet*T.tt)*pp[i].GravAccel;
+    t += dot(T.tt*gr->beta + T.ti, pp[i].GravAccel)/alpha;
 #endif
     Src->tau = alpha*gr->gdet*t;
     Src->p = 0;
@@ -114,7 +105,7 @@ KOKKOS_INLINE_FUNCTION int gr_add_source_term(int i, struct gr_primitives *prims
                 endrun(9993001); return -1;
             }
             p_err = cons->S/cons->D - p_err;
-            error = 0; for(int k = 0; k < 3; k++) {if(p_err[k]*p_err[k] > error) {error = p_err[k]*p_err[k];}}
+            error = fmax(fmax(p_err[0]*p_err[0], p_err[1]*p_err[1]), p_err[2]*p_err[2]);
             error = sqrt(cons->D*cons->D*error/cons->S.norm_sq());
             iter++;
             if(iter > IMPLICIT_MAX_NITER)
@@ -249,7 +240,7 @@ KOKKOS_INLINE_FUNCTION void gr_drift_impl(int i, double dt_drift, struct particl
         pp[i].Pos += (0.5*dt_drift)*(v_new - v_old); v_old = v_new; /* position with the corrected velocity */
 #ifdef IMPLICIT_SOLVER
         x_err = pp[i].Pos - x_err;
-        error = 0; for(int k = 0; k < 3; k++) {if(fabs(x_err[k]) > error) {error = fabs(x_err[k]);}}
+        error = fmax(fmax(fabs(x_err[0]), fabs(x_err[1])), fabs(x_err[2]));
         iter++;
         if(iter > IMPLICIT_MAX_NITER)
         {

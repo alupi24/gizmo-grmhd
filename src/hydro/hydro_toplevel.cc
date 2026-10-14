@@ -220,7 +220,7 @@ void hydro_final_operations_and_cleanup(void)
                    psihat equation, -alpha (c_h^2-1) K D psihat. Both need the metric derivatives: one extra Jacobian evaluation per active particle. */
                 if((c_h > 0) && (c_h < 1) && (CellP[i].PhiPred != 0))
                 {
-                    SymmetricTensor2<double> Kij; struct gr_metric4 dg[3]; Vec3<double> d_alpha; Mat3<double> d_beta;
+                    SymmetricTensor2<double> Kij; struct gr_sym4 dg[3]; Vec3<double> d_alpha; Mat3<double> d_beta;
                     get_metric_derivatives(P[i].Pos, gr, Kij, dg, d_alpha, d_beta);
                     double Ktrace = gr->ugamma[0][0]*Kij[0][0] + gr->ugamma[1][1]*Kij[1][1] + gr->ugamma[2][2]*Kij[2][2]
                                   + 2.*(gr->ugamma[0][1]*Kij[0][1] + gr->ugamma[0][2]*Kij[0][2] + gr->ugamma[1][2]*Kij[1][2]);

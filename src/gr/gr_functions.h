@@ -54,7 +54,7 @@ KOKKOS_INLINE_FUNCTION int gr_limiter_flag(const Vec3<double> &pos)
 }
 
 /* covariant 4-metric at pos; the source is at the box centre if the box is periodic */
-KOKKOS_INLINE_FUNCTION void get_covariant_metric(const Vec3<double> &pos, struct gr_metric4 *g)
+KOKKOS_INLINE_FUNCTION void get_covariant_metric(const Vec3<double> &pos, struct gr_sym4 *g)
 {
     Vec3<double> dp = pos;
 #ifdef BOX_PERIODIC
@@ -91,7 +91,7 @@ KOKKOS_INLINE_FUNCTION void get_covariant_metric(const Vec3<double> &pos, struct
 }
 
 /* 3+1 coefficients (spatial metric and its inverse, shift, lapse, sqrt(gamma)) from the covariant 4-metric; limiter is left untouched */
-KOKKOS_INLINE_FUNCTION void gr_metric_from_4metric(const struct gr_metric4 *g, struct gr_metric *gr)
+KOKKOS_INLINE_FUNCTION void gr_metric_from_4metric(const struct gr_sym4 *g, struct gr_metric *gr)
 {
     gr->gamma = g->ij;
     double det = gr->gamma.invert(gr->ugamma);
@@ -103,7 +103,7 @@ KOKKOS_INLINE_FUNCTION void gr_metric_from_4metric(const struct gr_metric4 *g, s
 /* fills the metric structure at pos (potential: Newtonian correction of the lapse, only with self-gravity) */
 KOKKOS_INLINE_FUNCTION void set_metric_coefficients(const Vec3<double> &pos, double potential, struct gr_metric *gr)
 {
-    struct gr_metric4 g;
+    struct gr_sym4 g;
     get_covariant_metric(pos, &g);
     gr_metric_from_4metric(&g, gr);
 #ifndef SELFGRAVITY_OFF
@@ -112,8 +112,8 @@ KOKKOS_INLINE_FUNCTION void set_metric_coefficients(const Vec3<double> &pos, dou
     gr->limiter = gr_limiter_flag(pos);
 }
 
-/* element (mu,nu) of a covariant 4-metric (0 = t) */
-KOKKOS_INLINE_FUNCTION double gr_metric4_get(const struct gr_metric4 *g, int mu, int nu)
+/* element (mu,nu) of a symmetric 4-tensor (0 = t) */
+KOKKOS_INLINE_FUNCTION double gr_sym4_get(const struct gr_sym4 *g, int mu, int nu)
 {
     if(mu == 0 && nu == 0) {return g->tt;}
     if(mu == 0) {return g->ti[nu-1];}
@@ -121,15 +121,21 @@ KOKKOS_INLINE_FUNCTION double gr_metric4_get(const struct gr_metric4 *g, int mu,
     return g->ij[mu-1][nu-1];
 }
 
+/* full contraction of two symmetric 4-tensors, A^{mu nu} B_{mu nu} = A.tt B.tt + 2 A.ti.B.ti + A.ij:B.ij */
+KOKKOS_INLINE_FUNCTION double gr_sym4_contract(const struct gr_sym4 &A, const struct gr_sym4 &B)
+{
+    return A.tt*B.tt + 2.*dot(A.ti, B.ti) + A.ij.double_contract(B.ij);
+}
+
 /* spatial derivatives of the 4-metric (dg[dir] = d g_{mu nu}/dx^dir), lapse and shift (dbeta[dir][j] = d beta^j/dx^dir) at pos,
    by centred finite differences along the Cartesian directions */
-KOKKOS_INLINE_FUNCTION void compute_metric_jacobian(const Vec3<double> &pos, struct gr_metric4 dg[3], Vec3<double> &dalpha, Mat3<double> &dbeta)
+KOKKOS_INLINE_FUNCTION void compute_metric_jacobian(const Vec3<double> &pos, struct gr_sym4 dg[3], Vec3<double> &dalpha, Mat3<double> &dbeta)
 {
     const double fac = 0.5/GR_EPS_TOLERANCE;
     for(int dir = 0; dir < 3; dir++)
     {
         Vec3<double> pH = pos, pL = pos; pH[dir] += GR_EPS_TOLERANCE; pL[dir] -= GR_EPS_TOLERANCE;
-        struct gr_metric4 gH, gL; struct gr_metric mH, mL;
+        struct gr_sym4 gH, gL; struct gr_metric mH, mL;
         get_covariant_metric(pH, &gH); get_covariant_metric(pL, &gL);
         gr_metric_from_4metric(&gH, &mH); gr_metric_from_4metric(&gL, &mL);
         dg[dir].tt = fac*(gH.tt - gL.tt);
@@ -141,15 +147,15 @@ KOKKOS_INLINE_FUNCTION void compute_metric_jacobian(const Vec3<double> &pos, str
 }
 
 /* extrinsic curvature K_ij = -alpha Gamma^0_ij and the metric derivatives at pos, given the metric there */
-KOKKOS_INLINE_FUNCTION void get_metric_derivatives(const Vec3<double> &pos, const struct gr_metric *gr, SymmetricTensor2<double> &Kij, struct gr_metric4 dg[3], Vec3<double> &dalpha, Mat3<double> &dbeta)
+KOKKOS_INLINE_FUNCTION void get_metric_derivatives(const Vec3<double> &pos, const struct gr_metric *gr, SymmetricTensor2<double> &Kij, struct gr_sym4 dg[3], Vec3<double> &dalpha, Mat3<double> &dbeta)
 {
     double invalpha2 = 1./(gr->alpha*gr->alpha);
     double g00 = -invalpha2; Vec3<double> g0i = invalpha2*gr->beta; /* g^{00}, g^{0i} of the inverse 4-metric */
     compute_metric_jacobian(pos, dg, dalpha, dbeta);
     for(int i = 0; i < 3; i++) {for(int j = i; j < 3; j++)
     {
-        double K = 0.5*g00*(gr_metric4_get(&dg[j], 0, i+1) + gr_metric4_get(&dg[i], 0, j+1)); /* the time derivative of the metric is zero */
-        for(int w = 1; w < 4; w++) {K += 0.5*g0i[w-1]*(gr_metric4_get(&dg[j], w, i+1) + gr_metric4_get(&dg[i], w, j+1) - gr_metric4_get(&dg[w-1], i+1, j+1));}
+        double K = 0.5*g00*(gr_sym4_get(&dg[j], 0, i+1) + gr_sym4_get(&dg[i], 0, j+1)); /* the time derivative of the metric is zero */
+        for(int w = 1; w < 4; w++) {K += 0.5*g0i[w-1]*(gr_sym4_get(&dg[j], w, i+1) + gr_sym4_get(&dg[i], w, j+1) - gr_sym4_get(&dg[w-1], i+1, j+1));}
         Kij[i][j] = -gr->alpha*K;
     }}
 }

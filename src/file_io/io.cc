@@ -1042,7 +1042,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
-                    struct gr_metric4 g; get_covariant_metric(P[pindex].Pos, &g);
+                    struct gr_sym4 g; get_covariant_metric(P[pindex].Pos, &g);
                     /* packed as tt, tx, ty, tz, xx, xy, xz, yy, yz, zz (the ordering of the C/C++ GR code), then alpha and sqrt(gamma) */
                     fp[0] = (MyOutputFloat) g.tt;
                     fp[1] = (MyOutputFloat) g.ti[0]; fp[2] = (MyOutputFloat) g.ti[1]; fp[3] = (MyOutputFloat) g.ti[2];

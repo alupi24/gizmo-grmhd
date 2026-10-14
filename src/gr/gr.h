@@ -56,12 +56,12 @@ struct gr_metric
     int limiter;                      /*!< 1 where the Lorentz factor is limited to GR_GAMMA_LIMITER (inside GAMMA_LIMITER_RADIUS): set with the metric, so that no caller needs the position */
 };
 
-/* --- covariant 4-metric g_{mu nu} at one point --- */
-struct gr_metric4
+/* --- a symmetric 4-tensor in the 3+1 split (the covariant 4-metric g_{mu nu}, its derivatives, the stress-energy tensor T^{mu nu}) --- */
+struct gr_sym4
 {
-    double tt;                        /*!< g_tt */
-    Vec3<double> ti;                  /*!< g_ti */
-    SymmetricTensor2<double> ij;      /*!< g_ij (= the covariant spatial metric) */
+    double tt;                        /*!< tt component */
+    Vec3<double> ti;                  /*!< ti components */
+    SymmetricTensor2<double> ij;      /*!< ij components (for the metric: the covariant spatial metric) */
 };
 
 /* --- Conserved and primitive variables of one cell (the conserved ones are densitized, i.e. include sqrt(gamma)) --- */
