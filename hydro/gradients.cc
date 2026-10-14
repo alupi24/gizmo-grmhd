@@ -600,13 +600,14 @@ void local_slopelimiter(double *grad, double valmax, double valmin, double alim,
         if(abs_max<abs_min) {abs_max=fabs_min; abs_min=fabs_max;} /* get largest positive/negative deviations, determine smaller in absolute value */
         f_corr_overshoot = DMIN(abs_min + shoot_tol*abs_max, abs_max); /* = abs_min for shoot_tol = 0; don't let gradient deviate by more than this in size, slightly larger if 'shoot_tol' allows some overshoot tolerance */
         cfac *= f_corr_overshoot; /* multiply by the correction factor of interest */
-#ifndef GENERAL_RELATIVITY /* (the positivity-preserving restriction is not applied in GR, as in the original GR code) */
         if(pos_preserve == 1) /* demand that the limited slope be strictly positivity-preserving over the maximal range to any neighbors */
         {
+            double d_pos = 0.5 * d_max; /* the reconstruction is only evaluated at the faces, at the pair midpoints, i.e. within half the range to any neighbour.
+                                           The full range (>= kernel radius, along the steepest descent) flattens the gradients that balance gravity in
+                                           hydrostatic equilibria (e.g. polytropic spheres, TOV stars) */
             double fmin = DMIN(val_cen, DMAX(0, DMAX(MIN_REAL_NUMBER*val_cen, DMIN(0.5*(val_cen+valmin), val_cen-f_corr_overshoot)))); /* minimum value: smaller of overshoot target or half positive-definite value, but cannot go negative in larger range */
-            cfac = DMIN( (((val_cen-fmin) / d_max) / d_abs) , cfac ); /* use more conservative limiter, of cfac above or this, over longer range d_max, to restrict here */
+            cfac = DMIN( (((val_cen-fmin) / d_pos) / d_abs) , cfac ); /* use more conservative limiter, of cfac above or this, over longer range d_max, to restrict here */
         }
-#endif
         if(cfac < 1) {for(k=0;k<3;k++) {grad[k] *= cfac;}} /* scalar gradient correction */
     }
 }
