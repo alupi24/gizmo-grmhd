@@ -468,7 +468,7 @@ double evaluate_NH_from_GradRho(MyFloat gradrho[3], double rkern, double rho, do
     using boundary conditions that you should not) */
 double Get_DtB_FaceArea_Limiter(int i)
 {
-#ifdef HYDRO_SPH
+#if defined(HYDRO_SPH) || defined(MHD_NO_DTB_FACEAREA_LIMITER) /* MHD_NO_DTB_FACEAREA_LIMITER (diagnostic): switch the face-area limiter of DtB (and DtPhi) off */
     return 1;
 #else
     /* define some variables */

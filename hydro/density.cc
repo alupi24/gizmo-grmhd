@@ -569,7 +569,7 @@ void density(void)
                     CellP[i].FaceClosureError = DMIN(DMAX(1.0259-2.52444*closure_asymm,0.344301),1.); // correction factor for 'missing' volume assuming a wendland C2 kernel and a sharp surface from Reinhardt & Stadel 2017 (arXiv:1701.08296)
 #else
                     CellP[i].FaceClosureError = dimless_face_leak / (2.*NUMDIMS*pow(dx_i,NUMDIMS-1));
-#ifdef HYDRO_CLOSED_FACES
+#if defined(HYDRO_CLOSED_FACES) && !defined(HYDRO_CLOSED_FACES_KEEP_FCE) /* HYDRO_CLOSED_FACES_KEEP_FCE (diagnostic): keep the estimator of the uncorrected faces */
                     CellP[i].FaceClosureError *= CellP[i].ClosureResidual; /* the estimator measures the uncorrected faces: scale it to the closed ones, with the residual from the last gradient pass */
 #endif
 #endif
