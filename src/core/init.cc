@@ -559,6 +559,10 @@ void init(void)
         CellP[i].ConditionNumber = 1;
         CellP[i].DtInternalEnergy = 0;
         CellP[i].FaceClosureError = 0;
+#ifdef GENERAL_RELATIVITY
+        set_metric_coefficients(P[i].Pos.data, P[i].Potential, &(CellP[i].gr));
+        CellP[i].DtMomentum = {}; CellP[i].DtEnergy = 0; CellP[i].DtVolume = 0;
+#endif
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
         CellP[i].MaxKineticEnergyNgb = 0;
 #endif
@@ -806,8 +810,11 @@ void init(void)
 #if defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
         CellP[i].Balpha = 0.0;
 #endif
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
         CellP[i].Phi = CellP[i].PhiPred = CellP[i].DtPhi = 0;
+#ifdef DIVBCLEANING_GR
+        CellP[i].CleaningSpeed = 0; /* set from the local magnetosonic speed in the first hydro loop */
+#endif
 #endif
 #ifdef SINK_RETURN_BFLUX
         P[i].B[0] = P[i].B[1] = P[i].B[2] = 0;
@@ -863,6 +870,10 @@ void init(void)
     if(RestartFlag==0) {for(i = 0; i < NumPart; i++) {P[i].ID_child_number = 0; P[i].ID_generation = 0;}}
 #ifdef NO_CHILD_IDS_IN_ICS
     if(RestartFlag != 1) {for(i = 0; i < NumPart; i++) {P[i].ID_child_number = 0; P[i].ID_generation = 0;}}
+#endif
+
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC>0)
+    for(i = 0; i < N_gas; i++) {if(P[i].Type == 0) {check_boundary(i);}} /* excise the cells inside the horizon (apply_excision does it every step) */
 #endif
 
 #ifdef TEST_FOR_IDUNIQUENESS

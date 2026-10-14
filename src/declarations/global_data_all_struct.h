@@ -618,6 +618,12 @@ struct global_data_all_processes
     double ElectronFreePathFactor;	/*!< Factor to get electron mean free path */
 #endif
 
+#ifdef GENERAL_RELATIVITY
+#if (GR_METRIC==1)
+  double MetricParams[2];       /*!< Kerr metric: mass and dimensionless spin of the black hole (GR_Mass, GR_Spin in the parameter file) */
+#endif
+#endif
+
 #ifdef MAGNETIC
 #ifdef MHD_B_SET_IN_PARAMS
   double BiniX, BiniY, BiniZ;	/*!< Initial values for B */
@@ -625,9 +631,11 @@ struct global_data_all_processes
 #ifdef SPH_TP12_ARTIFICIAL_RESISTIVITY
   double ArtMagDispConst;	/*!< Sets the parameter \f$\alpha\f$ of the artificial magnetic disipation */
 #endif
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
   double FastestWaveSpeed;
   double FastestWaveDecay;
+#endif
+#ifdef DIVBCLEANING_DEDNER
   double DivBcleanParabolicSigma;
   double DivBcleanHyperbolicSigma;
 #endif

@@ -98,6 +98,21 @@
 #MHD_BATTERY_MECHANISMS=1       # in-situ generation of seed magnetic fields from non-ideal EMFs. Bitfield: bit 0 (=1) electron Biermann battery (Kulsrud 1997); bit 1 (=2) radiative-ionization battery (Harrison 1973 / Durrive & Langer 2015); bit 2 (=4) charged-dust battery in TVA / fluid-limit (Soliman, Hopkins & Squire 2025 §2.6 subgrid form, dust treated implicitly via local metallicity + radiation pressure); bit 3 (=8) charged-dust battery with explicit dust current J_d summed from grain particles (Soliman, Hopkins & Squire 2025 Eq. 9; requires GRAIN_FLUID). Combine bits with addition (e.g., =5 enables Biermann + dust-explicit). Requires MAGNETIC. Bit 3 requires GRAIN_FLUID. Cite Soliman, Hopkins & Squire 2025, ApJ 985, 55, when using bits 2 or 3.
 #TWO_TEMPERATURE_PLASMA=1       # evolve the electron temperature T_e independently from the ion/gas temperature T_i (two-temperature plasma). Bitfield: bit 0 (=1) electron-ion Coulomb (Spitzer 1962) equilibration + radiative cooling/Compton routed to T_e (required core); bit 1 (=2) electron-neutral elastic coupling [reserved, not yet implemented]; bit 2 (=4) route Spitzer thermal conduction deposition into u_e instead of u_total. Combine bits with addition. Primary state is u_e_cell (specific electron internal energy per gas mass); T_e_cell is a derived cache so the Biermann battery + gradient pass + snapshot consumers do not change. Total InternalEnergy remains the single conserved hydro variable (sub-energy mode); Riemann solver untouched. Requires COOLING. Mutually exclusive with CHIMES, EOS_HELMHOLTZ, COOLING_OPERATOR_SPLIT (v1).
 ## ----------------------------------------------------------------------------------------------------
+####################################################################################################
+# --------------------------------------- General relativity
+# ------------------------------- users of these routines should cite Lupi 2023, MNRAS, 519, 1115 (GR hydro) and Fedrigo & Lupi 2025, A&A, 700, A112 (GR MHD)
+####################################################################################################
+#GENERAL_RELATIVITY=0           # turns on general relativistic hydrodynamics; 0=HLL solver/1=GFORCE solver. Does not work with SPH; forces SELFGRAVITY_OFF. Needs PREVENT_PARTICLE_MERGE_SPLIT (merge/split not ported yet)
+#GR_METRIC=1                    # metric: 0=Minkowski, 1=Kerr (default; GR_Mass/GR_Spin in the parameterfile, in code units G=c=1). (2=superposed binary black holes and <0=tabulated metric are not ported to this branch yet)
+#USE_BOYERLINDQUIST             # force Boyer-Lindquist coordinates for GR_METRIC=1 (otherwise Kerr-Schild coordinates, which are regular at the horizon)
+#GR_EXCISION_RADIUS=2.1         # cells inside this radius (in units of the horizon radius) are removed from the simulation, to avoid the divergence at the black hole (default 2.1)
+#DIVBCLEANING_GR                # divergence cleaning in GR (always on with GENERAL_RELATIVITY+MAGNETIC); cleaning speed c_h, damping K and boost f are set in gr/gr.h (see gr/ROUTE_B_cleaning_notes.pdf)
+#GR_CLEANING_LEGACY             # regression mode: reproduces the pre-Route-B cleaning (c_h=1 states, damping K*alpha*v_sig/(2 dx), old signal-velocity boost) with the same binary; HLL/GForce only
+#GR_ENTROPY_SWITCH              # compute the internal energy density from the conserved entropy function P/rho^Gamma where P_mag > P_th
+#GR_TIMESTEP_DV_FRAC=0.01       # GR time step: |dv/dt| dt <= GR_TIMESTEP_DV_FRAC * (signal speed), default 0.01
+#GR_TEST_PARTICLE               # forces the gas to behave like collisionless particles (tests of the source terms)
+####################################################################################################
+
 # -------------------------------------- Conduction
 # ----------------------------------------- [Please cite and read the methods paper Hopkins 2017, MNRAS, 466, 3387]
 #CONDUCTION                     # Thermal conduction solved *explicitly*: isotropic if MAGNETIC off, otherwise anisotropic

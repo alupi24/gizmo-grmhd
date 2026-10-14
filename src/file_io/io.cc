@@ -1028,6 +1028,31 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+#ifdef GENERAL_RELATIVITY
+        case IO_RHO0:		/* rest-mass (primitive) density */
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    double vcoord[3] = {P[pindex].Vel[0], P[pindex].Vel[1], P[pindex].Vel[2]};
+                    *fp++ = (MyOutputFloat) gr_get_primitive_density(CellP[pindex].Density, vcoord, &(CellP[pindex].gr), CellP[pindex].gr.limiter);
+                    n++;
+                }
+            break;
+
+        case IO_METRIC:		/* covariant 4-metric (10 components), lapse and sqrt(gamma) */
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    double gcov_tmp[10]; get_covariant_metric(P[pindex].Pos.data, gcov_tmp);
+                    for(k=0;k<10;k++) {fp[k] = (MyOutputFloat) gcov_tmp[k];}
+                    fp[10] = (MyOutputFloat) CellP[pindex].gr.alpha;
+                    fp[11] = (MyOutputFloat) CellP[pindex].gr.gdet;
+                    fp += 12;
+                    n++;
+                }
+            break;
+#endif
+
         case IO_BFLD:		/* magnetic field  */
 #ifdef MAGNETIC
             for(n = 0; n < pc; pindex++)
@@ -1200,7 +1225,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
 
         case IO_PHI:		/* divBcleaning fuction of particle  */
-#if defined(DIVBCLEANING_DEDNER) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
+#if (defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -1211,7 +1236,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
 
         case IO_GRADPHI:		/* divBcleaning fuction of particle  */
-#if defined(DIVBCLEANING_DEDNER) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
+#if (defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -2016,6 +2041,20 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
                 bytes_per_blockelement = 3 * sizeof(MyOutputPosFloat);
             break;
 
+#ifdef GENERAL_RELATIVITY
+        case IO_RHO0:
+            if(mode)
+                bytes_per_blockelement = sizeof(MyInputFloat);
+            else
+                bytes_per_blockelement = sizeof(MyOutputFloat);
+            break;
+        case IO_METRIC:
+            if(mode)
+                bytes_per_blockelement = 12 * sizeof(MyInputFloat);
+            else
+                bytes_per_blockelement = 12 * sizeof(MyOutputFloat);
+            break;
+#endif
         case IO_VEL:
         case IO_PARTVEL:
         case IO_HERMITE_VEL:
@@ -2426,6 +2465,14 @@ int get_values_per_blockelement(enum iofields blocknr)
     int values = 0;
     switch (blocknr)
     {
+#ifdef GENERAL_RELATIVITY
+        case IO_RHO0:
+            values = 1;
+            break;
+        case IO_METRIC:
+            values = 12;
+            break;
+#endif
         case IO_POS:
         case IO_VEL:
         case IO_PARTVEL:
@@ -2796,6 +2843,10 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_DELAYTIME:
         case IO_SFR:
         case IO_DTENTR:
+#ifdef GENERAL_RELATIVITY
+        case IO_RHO0:
+        case IO_METRIC:
+#endif
         case IO_BFLD:
         case IO_AMBIPOLAR:
         case IO_HALL:
@@ -3262,6 +3313,12 @@ int blockpresent(enum iofields blocknr)
 #endif
             break;
 
+#ifdef GENERAL_RELATIVITY
+        case IO_RHO0:
+        case IO_METRIC:
+            return 1;
+            break;
+#endif
         case IO_BFLD:
 #if defined(MAGNETIC)
             return 1;
@@ -3361,7 +3418,7 @@ int blockpresent(enum iofields blocknr)
 
         case IO_PHI:
         case IO_GRADPHI:
-#if defined(DIVBCLEANING_DEDNER) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
+#if (defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
             return 1;
 #endif
             break;
@@ -3834,6 +3891,14 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_TSTP:
             strncpy(label, "TSTP", 4);
             break;
+#ifdef GENERAL_RELATIVITY
+        case IO_RHO0:
+            strncpy(label, "RHO0", 4);
+            break;
+        case IO_METRIC:
+            strncpy(label, "gcov", 4);
+            break;
+#endif
         case IO_BFLD:
             strncpy(label, "BFLD", 4);
             break;
@@ -4301,6 +4366,14 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_TSTP:
             strcpy(buf, "TimeStep");
             break;
+#ifdef GENERAL_RELATIVITY
+        case IO_RHO0:
+            strcpy(buf, "RestMassDensity");
+            break;
+        case IO_METRIC:
+            strcpy(buf, "GRMetricTensor");
+            break;
+#endif
         case IO_BFLD:
             strcpy(buf, "MagneticField");
             break;

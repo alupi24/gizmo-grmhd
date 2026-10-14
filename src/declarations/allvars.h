@@ -640,6 +640,10 @@ enum iofields
   IO_DTENTR,
   IO_TSTP,
   IO_BFLD,
+#ifdef GENERAL_RELATIVITY
+  IO_RHO0,
+  IO_METRIC,
+#endif
   IO_AMBIPOLAR,
   IO_OHMIC,
   IO_HALL,

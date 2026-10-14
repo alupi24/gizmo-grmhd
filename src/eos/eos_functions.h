@@ -781,6 +781,14 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
     if(All.Time > All.TimeBegin) {gamma_eos_index = cell[i].gamma_eos_value();} /* can only safely set this after initial startup, not on first call before proper cooling pass */
     cell[i].Gamma = gamma_eos_index;
     press = (gamma_eos_index-1) * cell[i].InternalEnergyPred * cell[i].density_for_energy();
+#ifdef GENERAL_RELATIVITY /* GR: pressure from the rest-mass density (density_for_energy()), with the EOS of the con2prim (gr/gr_functions.h) */
+    press = gr_pressure_rho0_u(cell[i].density_for_energy(), cell[i].InternalEnergyPred);
+#ifdef EOS_GENERAL
+    cell[i].SoundSpeed = gr_sound_speed(gamma_eos_index, press, cell[i].density_for_energy(), cell[i].InternalEnergyPred);
+#endif
+    cell[i].Pressure = press;
+    return;
+#endif
 
 #ifdef COOLING
 #ifdef GIZMO_TRACK_ELECTRON_STATE

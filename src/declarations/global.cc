@@ -61,6 +61,19 @@ void compute_global_quantities_of_system(void)
         vel += P[i].GravPM * dt_gravkick_pm;
 #endif
         
+#ifdef GENERAL_RELATIVITY
+        if(P[i].Type == 0)
+        {
+            /* GR: m (h W v)^2 as the kinetic-energy diagnostic, as in the original GR code */
+            double vcoord[3] = {P[i].Vel[0], P[i].Vel[1], P[i].Vel[2]}, vphys[3] = {P[i].Vel[0], P[i].Vel[1], P[i].Vel[2]};
+            double h = 1 + CellP[i].InternalEnergy + CellP[i].Pressure/gr_get_primitive_density(CellP[i].Density, vcoord, &(CellP[i].gr), CellP[i].gr.limiter);
+            Vphys(vphys, CellP[i].gr.beta, CellP[i].gr.alpha);
+            double W = lorentz_factor(CellP[i].gr.gamma, vphys, CellP[i].gr.limiter);
+            double S[3] = {h*W*vphys[0], h*W*vphys[1], h*W*vphys[2]};
+            sys.EnergyKinComp[P[i].Type] += P[i].Mass * vector_sqnorm(CellP[i].gr.gamma, S);
+        }
+        else
+#endif
         sys.EnergyKinComp[P[i].Type] += 0.5 * P[i].Mass * vel.norm_sq() / a2;
         if(P[i].Type == 0) {egyspec = entr; sys.EnergyIntComp[0] += P[i].Mass * egyspec;}
         

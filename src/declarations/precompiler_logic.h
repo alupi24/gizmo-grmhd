@@ -24,6 +24,43 @@
 #endif
 #endif
 
+/* ----- general relativity (gr/gr.h): Lupi 2023 (GR hydro), Fedrigo & Lupi 2025 (GR MHD). The metric is prescribed (no self-gravity) ----- */
+#ifdef GENERAL_RELATIVITY
+#if defined(HYDRO_DENSITY_SPH) || defined(HYDRO_PRESSURE_SPH)
+#error "GENERAL_RELATIVITY does not work with the SPH solvers"
+#endif
+#if (GENERAL_RELATIVITY==2)
+#error "GENERAL_RELATIVITY=2 (HLLC solver) is not ported to the Kokkos code: use 0 (HLL) or 1 (GForce)"
+#endif
+#ifndef GR_METRIC
+#define GR_METRIC (1)                 /* default: Kerr (Schwarzschild for GR_Spin=0) */
+#endif
+#ifndef SELFGRAVITY_OFF
+#define SELFGRAVITY_OFF               /* the metric is prescribed: no Newtonian self-gravity */
+#endif
+#if (GR_METRIC==1)
+#ifndef USE_BOYERLINDQUIST
+#define USE_KERRSCHILD_COORDINATES    /* Kerr-Schild coordinates by default for a single black hole */
+#endif
+#endif
+#if (GR_METRIC>0)
+#ifndef SINK_CALC_DISTANCES
+#define SINK_CALC_DISTANCES
+#endif
+#ifndef PARTICLE_EXCISION
+#define PARTICLE_EXCISION             /* the cells inside GR_EXCISION_RADIUS horizon radii are removed */
+#endif
+#ifndef GR_EXCISION_RADIUS
+#define GR_EXCISION_RADIUS (2.1)      /* in units of the horizon radius */
+#endif
+#endif
+#if (GR_METRIC==2)
+#ifndef GRAVITY_ANALYTIC
+#define GRAVITY_ANALYTIC
+#endif
+#endif
+#endif
+
 /* define the default mesh-motion assumption, if this is not provided by the user */
 #if !defined(HYDRO_FIX_MESH_MOTION)
 #if defined(HYDRO_REGULAR_GRID)
@@ -1282,9 +1319,23 @@
 #endif
 
 #ifdef MAGNETIC /* recommended MHD switches -- only turn these off for de-bugging */
+#ifndef GENERAL_RELATIVITY
 #define DIVBCLEANING_DEDNER         /* hyperbolic/parabolic div-cleaing (Dedner 2002), with TP improvements */
+#else
+#define DIVBCLEANING_GR             /* GR hyperbolic/parabolic cleaning (Fedrigo & Lupi 2025) with a genuine cleaning speed c_h (Route B) */
+#endif
 #ifdef HYDRO_SPH /* MHD switches specific to SPH MHD */
 #define SPH_TP12_ARTIFICIAL_RESISTIVITY   /* turns on magnetic dissipation ('artificial resistivity'): uses tricco switch =h*|gradB|/|B| */
+#endif
+#else
+/* the divergence-cleaning flags only make sense with MAGNETIC (they are set automatically above): if a Config lists one of them
+   without MAGNETIC, ignore it here, since several files test only the cleaning flags while the fields they need are declared inside
+   the MAGNETIC blocks */
+#ifdef DIVBCLEANING_GR
+#undef DIVBCLEANING_GR
+#endif
+#ifdef DIVBCLEANING_DEDNER
+#undef DIVBCLEANING_DEDNER
 #endif
 #endif
 
@@ -1793,4 +1844,12 @@
 #error "EOS_SUBSTELLAR_ISM anchors the cached energy-to-temperature conversion, which requires every writer of the cached temperature to update its anchor alongside. Grackle, Helmholtz, ANEOS, Tillotson, elastic and mixed gas/solid equations of state each set that temperature from a solver the cache cannot follow, and the table dispatch is per-cell, so the combination is refused rather than reading a stale anchor. CHIMES is excluded by the gate above rather than here."
 #endif
 #define EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
+#endif
+
+/* ----- general relativity: the header with the GR structures must follow every definition above (gr_metric is a member of the cell data) ----- */
+#ifdef GENERAL_RELATIVITY
+#if !defined(PREVENT_PARTICLE_MERGE_SPLIT)
+#error "the merge/split of gas cells is not ported for GENERAL_RELATIVITY in the Kokkos code yet: add PREVENT_PARTICLE_MERGE_SPLIT to the Config"
+#endif
+#include "../gr/gr.h"
 #endif
