@@ -98,12 +98,17 @@
    relaxed in the gradient loop so that sum_j A~_ij = 0; the correction is antisymmetric in (i,j), so conservation is unchanged.
    Applied last, so the faces used by every flux are the closed ones (see scripts/projection_tests/RESULTS_exact_closure_ngb32.md). */
 #if defined(HYDRO_CLOSED_FACES)
-    double Face_Area_Norm_Uncorrected = Face_Area_Norm;
+    double Face_Area_Norm_Uncorrected = Face_Area_Norm, Face_Area_Closure_dA[3];
+    for(k=0;k<3;k++) {Face_Area_Closure_dA[k] = Face_Area_Norm_Uncorrected * (local.ClosurePot[k] - CellP[j].ClosurePot[k]);}
+#if !defined(HYDRO_CLOSED_FACES_DIVB_ONLY) || defined(CLOSED_FACES_GRADIENT_LOOP)
+    /* HYDRO_CLOSED_FACES_DIVB_ONLY: the fluxes keep the original faces (whose non-closure keeps the particle distribution regular); the closed
+       faces are used only by the closure solve (gradient loop) and for the face-sum divergence of B (hydro_core_meshless.h) */
     {
         double Face_Area_Norm2_corr = 0;
-        for(k=0;k<3;k++) {Face_Area_Vec[k] += Face_Area_Norm_Uncorrected * (local.ClosurePot[k] - CellP[j].ClosurePot[k]); Face_Area_Norm2_corr += Face_Area_Vec[k]*Face_Area_Vec[k];}
+        for(k=0;k<3;k++) {Face_Area_Vec[k] += Face_Area_Closure_dA[k]; Face_Area_Norm2_corr += Face_Area_Vec[k]*Face_Area_Vec[k];}
         Face_Area_Norm = sqrt(Face_Area_Norm2_corr);
     }
+#endif
 #endif
 
 

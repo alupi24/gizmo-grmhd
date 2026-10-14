@@ -7,6 +7,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#define CLOSED_FACES_GRADIENT_LOOP /* compute_finitevol_faces.h: the closure solve always uses the corrected faces */
 
 
 
@@ -978,7 +979,7 @@ void hydro_gradient_calc(void)
                     double c0_floor = 1.e-3 * GasGradDataPasser[i].DF_ClosureNorm, r_new = sqrt(c2) / DMAX(sqrt(c02), c0_floor); /* floor: already-closed uncorrected faces */
                     if(!isfinite(r_new)) {r_new = 1;}
                     r_new = DMIN(DMAX(r_new, 1.e-3), 1.); /* never above the uncorrected estimate; floored so the ratio below is safe */
-#if !defined(HYDRO_KERNEL_SURFACE_VOLCORR) && !defined(HYDRO_EXPLICITLY_INTEGRATE_VOLUME) && !defined(HYDRO_CLOSED_FACES_KEEP_FCE) /* there FaceClosureError holds a volume correction / a volume; HYDRO_CLOSED_FACES_KEEP_FCE (diagnostic) keeps the uncorrected estimator */
+#if !defined(HYDRO_KERNEL_SURFACE_VOLCORR) && !defined(HYDRO_EXPLICITLY_INTEGRATE_VOLUME) && !defined(HYDRO_CLOSED_FACES_KEEP_FCE) && !defined(HYDRO_CLOSED_FACES_DIVB_ONLY) /* there FaceClosureError holds a volume correction / a volume; HYDRO_CLOSED_FACES_KEEP_FCE (diagnostic) keeps the uncorrected estimator */
                     if(CellP[i].ClosureResidual > 0) {CellP[i].FaceClosureError *= r_new / CellP[i].ClosureResidual;}
 #endif
                     CellP[i].ClosureResidual = r_new;

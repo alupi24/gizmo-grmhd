@@ -400,6 +400,17 @@
 #ifdef MAGNETIC
             for(k=0;k<3;k++) {Fluxes.B[k] = Face_Area_Norm * Riemann_out.Fluxes.B[k];} // magnetic flux (B*V) //
             Fluxes.B_normal_corrected = -Riemann_out.B_normal_corrected * Face_Area_Norm;
+#if defined(HYDRO_CLOSED_FACES_DIVB_ONLY)
+            {
+                /* closed faces for the divergence only: the face-sum divergence (Powell terms, cleaning source) is measured on the closed faces,
+                   A~ = A + dA, adding -(face B).dA (Face_Area_Vec convention, outward face of i = -Face_Area_Vec); GR: densitized face field */
+                double dB_closure = 0; for(k=0;k<3;k++) {dB_closure += 0.5*(Riemann_vec.L.B[k] + Riemann_vec.R.B[k]) * Face_Area_Closure_dA[k];}
+#ifdef GENERAL_RELATIVITY
+                dB_closure *= Riemann_vec.gr.gdet;
+#endif
+                Fluxes.B_normal_corrected -= dB_closure;
+            }
+#endif
 #if (defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
             //Fluxes.phi = Riemann_out.Fluxes.phi * Face_Area_Norm; // after testing, we now prefer the mass-based fluxes, now //
 #ifdef DIVBCLEANING_GR
