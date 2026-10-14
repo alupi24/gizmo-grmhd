@@ -464,10 +464,10 @@ void hydro_accumulate_neighbor(
 #endif
     out.Acc += Fluxes.v;
     out.DtInternalEnergy += Fluxes.p;
-#if defined(GENERAL_RELATIVITY) && !defined(FREEZE_HYDRO)
+#if defined(GENERAL_RELATIVITY) && defined(MAGNETIC) && !defined(FREEZE_HYDRO)
     {
-        /* the volume variation from the Riemann problems, used by the GR kick/predict to estimate the new volume that multiplies the conserved
-           variables [accumulated for the hydro and the MHD solvers: the C/C++ GR code only did it under MAGNETIC] */
+        /* the volume variation from the Riemann problems, used by the GR kick/predict for the volume that multiplies the conserved field B*V
+           (the other conserved variables scale with the mass, so pure hydro does not need it) */
         double wt_face_sum = Face_Area_Norm * (-face_area_dot_vel + face_vel_i);
 #ifdef HYDRO_MESHLESS_FINITE_MASS
         wt_face_sum = Face_Area_Norm * (-Riemann_out.S_M + face_vel_i);

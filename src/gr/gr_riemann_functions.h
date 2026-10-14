@@ -394,11 +394,11 @@ KOKKOS_INLINE_FUNCTION void gr_hydro_riemann(const struct Input_vec_Riemann &Rie
     if(Riemann_out->P_M < 0) {return;}
 #if (GENERAL_RELATIVITY==1)
 #ifdef HYDRO_MESHLESS_FINITE_MASS
-    /* [kept as in the C/C++ GR code: the MFM HLLC fluxes carry no alpha*sqrt(gamma) factors, unlike the finite-volume form below;
-       exact in the flat metric] */
+    /* the face moves with the contact (v_frame = S_M): no mass flux, pressure work and force of the star state (the finite-volume
+       form below with v_frame_line = S_M; the C/C++ GR code omitted the alpha*sqrt(gamma) factors here) */
     Riemann_out->Fluxes.rho = 0;
-    Riemann_out->Fluxes.v = Riemann_out->P_M*n_unit;
-    Riemann_out->Fluxes.p = Riemann_out->P_M*Riemann_out->S_M;
+    Riemann_out->Fluxes.v = (gr->alpha*gr->gdet*Riemann_out->P_M)*n_unit;
+    Riemann_out->Fluxes.p = gr->gdet*Riemann_out->P_M*(Riemann_out->S_M + beta_n);
 #else
     gr_hydro_hllc_flux(L.cons, R.cons, vline_L, vline_R, S_L, S_R, v_frame_line, gr, beta_n, n_unit, Riemann_out);
 #endif
