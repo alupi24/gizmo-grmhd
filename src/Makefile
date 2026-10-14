@@ -663,6 +663,36 @@ OPT     += -DCHIMES_USE_DOUBLE_PRECISION -DGIZMO_GPU_ARENA_DEBUG
 endif
 
 #----------------------------
+## Apple Silicon with the toolchain from a conda environment (MPICH, Kokkos OpenMP backend, llvm-openmp):
+##   make SYSTYPE=MacBookConda_Kokkos GIZMO_CONDA_ENV=/path/to/env [GIZMO_HDF5_ROOT=/path/to/hdf5/prefix]
+## The device TUs are compiled by the same host compiler plus the Kokkos includes (OpenMP backend).
+ifeq ($(SYSTYPE),"MacBookConda_Kokkos")
+GIZMO_CONDA_ENV ?= $(CONDA_PREFIX)
+GIZMO_HDF5_ROOT ?= $(GIZMO_CONDA_ENV)
+CC       =  mpicc
+CXX      =  mpicxx -std=c++20
+OPTIMIZE = -O2 -funroll-loops   # no -ffast-math: see the position->key contract in declarations/typedefs.h
+OPTIMIZE += -Wno-unused-command-line-argument -Wno-unknown-pragmas
+OPTIMIZE += -Xpreprocessor -fopenmp -I$(GIZMO_CONDA_ENV)/include
+OPTIMIZE += -L$(GIZMO_CONDA_ENV)/lib -Wl,-rpath,$(GIZMO_CONDA_ENV)/lib -lomp
+KOKKOS_INCL = -I$(GIZMO_CONDA_ENV)/include -I$(GIZMO_CONDA_ENV)/include/kokkos
+KOKKOS_CPPFLAGS = $(KOKKOS_INCL)
+KOKKOS_LIBS_PATH = -L$(GIZMO_CONDA_ENV)/lib -Wl,-rpath,$(GIZMO_CONDA_ENV)/lib
+KOKKOS_LIBS = -lkokkoscore -lkokkoscontainers
+GPU_CXX    = mpicxx -std=c++20
+GPU_CFLAGS = $(KOKKOS_INCL)
+GPU_LDFLAGS = $(KOKKOS_LIBS_PATH)
+MKL_INCL = #
+MKL_LIBS = #
+FFTW_INCL= -I$(GIZMO_CONDA_ENV)/include
+FFTW_LIBS= -L$(GIZMO_CONDA_ENV)/lib
+HDF5INCL = -I$(GIZMO_HDF5_ROOT)/include -DH5_USE_16_API
+HDF5LIB  = -L$(GIZMO_HDF5_ROOT)/lib -Wl,-rpath,$(GIZMO_HDF5_ROOT)/lib -lhdf5 -lz
+MPICHLIB = #
+OPT     += -DDISABLE_ALIGNED_ALLOC
+endif
+
+#----------------------------
 ifeq ($(SYSTYPE),"github-ubuntu")
 CC       =  mpicc
 CXX      =  mpicxx
