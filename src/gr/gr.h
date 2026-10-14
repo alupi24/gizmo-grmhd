@@ -111,10 +111,7 @@ void smooth_conservatives_inside_horizon(int i, double r, double r_EH, double M)
 #endif
 void gr_con2prim_report_failure(const char *where, int code, const struct gr_conservatives *cons, const struct gr_primitives *prims, const struct gr_metric *gr); /* prints the state of a failed inversion (host) */
 
-/* --- host routines of the conserved-variable integration (gr/gr_kickdrift.cc) --- */
-void compute_initial_accelerations(void);
-void do_kick_general_relativity(int i, double dtime, double mass_old, double mass_new, int mode);
-void do_drift_general_relativity(int p, double dt);
-void do_predict_general_relativity(int p, double dt);
+/* --- the integration of the conserved variables is in gr/gr_kick_functions.h (device-callable: gr_kick_impl, gr_drift_impl, gr_predict_impl) --- */
+void compute_initial_accelerations(void); /* host (gr/gr_utils.cc): the first kick of every cell, to seed HydroAccel/DtInternalEnergy from the initial fluxes */
 
 #endif /* GR_GR_H */

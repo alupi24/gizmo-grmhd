@@ -6,6 +6,9 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "timestep_functions.h" /* apply_special_boundary_conditions_P */
+#ifdef GENERAL_RELATIVITY
+#include "../gr/gr_kick_functions.h" /* gr_kick_impl */
+#endif
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/gpu_neighbor_list.h" /* gpu_sidx_notify_owned_changed */
 #include <vector>
@@ -312,11 +315,27 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             grav_acc += P[i].GravPM * All.cf_a2inv;
 #endif
 
+#ifdef GENERAL_RELATIVITY
+            {
+                /* GR: update the conserved variables (fluxes from the hydro loop + metric source terms) and convert the result back into
+                   rates of change of the primitive velocity and specific internal energy (HydroAccel, DtInternalEnergy), applied below */
+                double mass_prekick = P[i].Mass, mass_postkick = P[i].Mass;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+                if(mode == 1) {mass_prekick = CellP[i].MassTrue - CellP[i].DtMass*dt_hydrokick;}
+                mass_postkick = mass_prekick + CellP[i].DtMass*dt_hydrokick;
+#endif
+                gr_kick_impl(i, dt_hydrokick, mass_prekick, mass_postkick, mode, P, CellP);
+            }
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             /* calculate the contribution to the energy change from the mass fluxes in the gravitation field */
             dEnt_Gravity += -dot(CellP[i].GravWorkTerm, grav_acc) * All.cf_atime * dt_hydrokick;
 #endif
+#ifdef GENERAL_RELATIVITY
+            double du_tot = mass_pred/mass_new*CellP[i].DtInternalEnergy * dt_hydrokick + dEnt_Gravity; /* the GR kick rate is defined with this mass_pred/mass_new factor */
+#else
             double du_tot = CellP[i].DtInternalEnergy * dt_hydrokick + dEnt_Gravity;
+#endif
 #if defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
             if((mode == 1) && (du_tot != 0) && (dt_hydrokick > 0)) { /* if about to consider second-halfstep kick (just after hydro) */
                 CellP[i].CoolingIsOperatorSplitThisTimestep=0; /* default to assume un-split */
@@ -481,6 +500,17 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
                 CellP[i].Density = CellP[i].Density_ExplicitInt; /*!< explicitly integrated volume/density variable to be used if integrating the SPH-like form of the continuity directly */
 #endif
+#if defined(GENERAL_RELATIVITY) && defined(GR_ENTROPY_SWITCH)
+                {double rho0 = gr_get_primitive_density(CellP[i].Density, CellP[i].VelPred, &(CellP[i].gr), 0);
+                 CellP[i].Entropy = gr_pressure_rho0_u(rho0, CellP[i].InternalEnergy) / pow(rho0, CellP[i].gamma_eos_value());}
+#endif
+#if defined(GENERAL_RELATIVITY) && defined(USE_KERRSCHILD_COORDINATES) && defined(PARTICLE_EXCISION) && defined(MAGNETIC)
+                {
+                    /* damp the velocity and the field of the cells that crossed the horizon (once per step for every active cell; the C/C++ GR code did it in the drift of the active cells) */
+                    double r = P[i].Pos.norm(), M_BH = All.MetricParams[0], a_BH = All.MetricParams[1], r_EH = M_BH*(1 + sqrt(1 - a_BH*a_BH));
+                    if(r <= r_EH) {smooth_conservatives_inside_horizon(i, r, r_EH, M_BH);}
+                }
+#endif
             }
         }
         
@@ -502,10 +532,13 @@ void set_predicted_quantities_for_extra_physics(int i)
 #if defined(MAGNETIC)
 #ifndef MHD_ALTERNATIVE_LEAPFROG_SCHEME
         CellP[i].BPred = CellP[i].B;
-#if defined(DIVBCLEANING_DEDNER)
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
         CellP[i].PhiPred = CellP[i].Phi;
 #endif
 #endif
+#endif
+#if defined(GENERAL_RELATIVITY) && defined(GR_ENTROPY_SWITCH)
+        CellP[i].EntropyPred = CellP[i].Entropy;
 #endif
 #ifdef COSMIC_RAY_FLUID
         for(kf=0;kf<N_CR_PARTICLE_BINS;kf++)
@@ -549,12 +582,13 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 #ifndef MHD_ALTERNATIVE_LEAPFROG_SCHEME
     double BphysVolphys_to_BcodeVolCode = 1 / All.cf_atime;
     CellP[i].B += CellP[i].DtB * (dt_entr * BphysVolphys_to_BcodeVolCode); // fluxes are always physical, convert to code units //
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
     double PhiphysVolphys_to_PhicodeVolCode = 1 / All.cf_a3inv; // for mass-based phi-fluxes (otherwise is just "1")
     /* phi units are [vcode][Bcode]=a^3 * vphys*Bphys */
     if(CellP[i].Density > 0)
     {
         /* now we're going to check for physically reasonable phi values */
+#ifndef GENERAL_RELATIVITY
         double cs_phys = CellP[i].effective_soundspeed();
         double b_phys = sqrt(CellP[i].Bfield().norm_sq())*All.cf_a2inv;
         double vsig1 = sqrt(cs_phys*cs_phys + b_phys*b_phys/(CellP[i].Density*All.cf_a3inv));
@@ -562,6 +596,14 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
         double vsig_max = DMAX( DMAX(vsig1,vsig2) , All.FastestWaveSpeed );
         double phi_phys_abs = fabs(Get_Gas_PhiField(i)) * All.cf_a3inv;
         double vb_phy_abs = vsig_max * b_phys;
+#else
+        /* GR: as in the C/C++ GR code [|B| of the primitive field, divided by the signal speed] */
+        double vsig_max = DMAX(0.5*CellP[i].MaxSignalVel, All.FastestWaveSpeed);
+        double phi_phys_abs = fabs(Get_Gas_PhiField(i));
+        Vec3<double> BField = CellP[i].Bfield()/CellP[i].gr.gdet;
+        double b_phys = sqrt(CellP[i].gr.gamma.quad(BField));
+        double vb_phy_abs = b_phys / vsig_max * CellP[i].gr.alpha;
+#endif
 
         if((!isnan(CellP[i].DtPhi))&&(phi_phys_abs>0)&&(vb_phy_abs>0)&&(!isnan(phi_phys_abs))&&(!isnan(vb_phy_abs)))
         {

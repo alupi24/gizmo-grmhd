@@ -331,10 +331,17 @@ double Get_DtB_FaceArea_Limiter(int i, struct particle_data *pp, struct gas_cell
     /* define some variables */
     double dt_entr = get_particle_timestep_in_physical(i, P);
     /* check the magnitude of the predicted change in B-fields, vs. B-magnitude */
+#ifndef GENERAL_RELATIVITY
     Vec3<double> dB = cell[i].DtB * (dt_entr / All.cf_atime); /* converts to code units of Vol_code*B_code = Vol_phys*B_phys/a */
     double dBmag = dB.norm(), Bmag = cell[i].BPred.norm();
     /* also make sure to check the actual pressure, since if P>>B, we will need to allow larger changes in B per timestep */
     double P_BV_units = sqrt(2.*cell[i].Pressure*All.cf_a3inv)*pp[i].Mass/cell[i].Density / All.cf_a2inv;
+#else
+    /* GR: norms with the spatial metric; |B| and the pressure term in the units of the evolved (conserved) variable sqrt(gamma)*B*V, like dB */
+    Vec3<double> dB = cell[i].DtB * dt_entr, Bprim = cell[i].Bfield() / cell[i].gr.gdet;
+    double dBmag = sqrt(cell[i].gr.gamma.quad(dB)), Bmag = sqrt(cell[i].gr.gamma.quad(Bprim)) * cell[i].gr.gdet * pp[i].Mass/cell[i].Density;
+    double P_BV_units = sqrt(2.*cell[i].Pressure)*pp[i].Mass/cell[i].Density * cell[i].gr.gdet;
+#endif
     /* the above should be in CODE Bcode*Vol_code units! */
     double Bmag_max = DMAX(Bmag, DMIN( P_BV_units, 10.*Bmag ));
     /* now check how accurately the cell is 'closed': the face areas are ideally zero */
@@ -346,11 +353,25 @@ double Get_DtB_FaceArea_Limiter(int i, struct particle_data *pp, struct gas_cell
     {
         double area_norm_min_threshold = 0.001;
         double area_norm_weight = 200.0;
+        double max_tol = 0.01;
+#ifdef GENERAL_RELATIVITY
+        area_norm_min_threshold = 0.01; area_norm_weight = 4000.0; max_tol = 0.001;
+#endif
         if(area_sum/area_norm > area_norm_min_threshold)
         {
-            double tol = (All.CourantFac/0.2) * DMAX( 0.01, area_norm/(area_norm_weight * area_sum) );
+            double tol = (All.CourantFac/0.2) * DMAX( max_tol, area_norm/(area_norm_weight * area_sum) );
             tol *= Bmag_max; /* give the limiter dimensions */
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC==1)
+            /* Kerr metric: apply the limiter only in a shell just outside the excision boundary (r < 1.4 x excision radius), r measured from the black hole */
+            Vec3<double> dp_BH = pp[i].Pos;
+#ifdef BOX_PERIODIC
+            dp_BH[0] -= boxHalf_X; dp_BH[1] -= boxHalf_Y; dp_BH[2] -= boxHalf_Z;
+#endif
+            double a_BH[3] = {0, 0, All.MetricParams[1]};
+            if(dp_BH.norm() < 1.4*GR_EXCISION_RADIUS*EHradius(All.MetricParams[0], a_BH)) {if(dBmag > 0 && tol/dBmag < 1.0) {return tol/dBmag;}}
+#else
             if(dBmag > tol) {return tol/dBmag;} /* now actually check if we exceed this */
+#endif
         }
     }
     return 1;
@@ -358,7 +379,7 @@ double Get_DtB_FaceArea_Limiter(int i, struct particle_data *pp, struct gas_cell
 }
 
 
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
 double INLINE_FUNC Get_Gas_PhiField(int i_particle_id) { return Get_Gas_PhiField_P(i_particle_id, P, CellP); }
 
 double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id) { return Get_Gas_PhiField_DampingTimeInv_P(i_particle_id, P, CellP); }

@@ -52,7 +52,7 @@ void find_timesteps(void)
     if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin || dt_displacement == 0)
         find_dt_displacement_constraint(All.cf_hubble_a * All.cf_atime * All.cf_atime);
 
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
     /* need to calculate the global fastest wave speed to manage the damping terms stably */
     if((All.HighestActiveTimeBin == All.HighestOccupiedTimeBin)||(All.FastestWaveSpeed == 0))
     {
@@ -67,10 +67,14 @@ void find_timesteps(void)
             if(P[i].Type==0)
             {
                 double vsig2 = 0.5  * fabs(CellP[i].MaxSignalVel); // in v_phys units //
+#ifndef GENERAL_RELATIVITY
                 double vA2_for_vsig = 0; // the magnetic term needs a density to divide by; a cell without one contributes only its sound speed, rather than an infinity that this max-reduction would then spread to every rank
                 if(CellP[i].Density > 0) {vA2_for_vsig = fac_magnetic_pressure * CellP[i].Bfield().norm_sq() / CellP[i].Density;}
                 double vsig1 = sqrt( CellP[i].effective_soundspeed()*CellP[i].effective_soundspeed() + vA2_for_vsig );
                 double vsig0 = DMAX(vsig1,vsig2);
+#else
+                double vsig0 = vsig2; (void)fac_magnetic_pressure;
+#endif
 
                 if(vsig0 > fastwavespeed) fastwavespeed = vsig0; // physical unit
                 double hsig0 = P[i].Get_Particle_Size() * All.cf_atime; // physical unit
@@ -655,6 +659,42 @@ integertime get_timestep(int p,		/*!< particle index */
             if(P[p].ID == All.SpawnedWindCellID) {dt_courant *= 0.5;} // be more careful if this is a spawned-in gas cell
 #endif
             if(dt_courant < dt) dt = dt_courant;
+#ifdef GENERAL_RELATIVITY
+            {
+                /* GR: the change of the conserved energy tau per step is limited to 10% of tau (a large energy flux must not make it negative) */
+                const struct gr_metric *gr = &(CellP[p].gr);
+                Vec3<double> vphys = Vphys(P[p].Vel, gr);
+                double rho = gr_get_primitive_density(CellP[p].Density, P[p].Vel, gr, gr->limiter);
+                double hstar = 1.0 + CellP[p].InternalEnergy + CellP[p].Pressure/rho, Vi = P[p].Mass/CellP[p].Density;
+#ifdef MAGNETIC
+                double b0, b2; Vec3<double> b, Bprim = CellP[p].B/(Vi*gr->gdet);
+                b2 = gr_bfield_restframe(gr, Bprim, vphys, &b0, &b, gr->limiter);
+                hstar += b2/rho;
+#endif
+                double Wl = lorentz_factor(gr->gamma, vphys, gr->limiter);
+                double tau = CellP[p].Density*hstar*Wl - gr->gdet*CellP[p].Pressure - CellP[p].Density;
+#ifdef MAGNETIC
+                tau += gr->gdet*(-0.5*b2 - b0*b0);
+#endif
+                dt = DMIN(dt, 0.1*tau/fabs(CellP[p].DtEnergy)*Vi);
+                /* the same check on the conserved momentum S_j = D h* W v_j - sqrt(gamma) b^0 b_j: the change of |S| = sqrt(gamma^ij S_i S_j) per step is limited
+                   to 10% of |S|. Near c this bounds the relative change of the Lorentz factor (dW/W ~ W^2 v.dv), which neither the Courant condition nor the
+                   acceleration criterion controls; |S| is floored at 10% of the total energy tau+D, so that gas at rest is limited on the energy scale instead */
+                {
+                    Vec3<double> S = (CellP[p].Density*hstar*Wl)*gr->gamma.matvec(vphys);
+#ifdef MAGNETIC
+                    S -= (gr->gdet*b0)*b;
+#endif
+                    double S2 = gr->ugamma.quad(S), dS2 = gr->ugamma.quad(CellP[p].DtMomentum);
+                    double S_scale = DMAX(sqrt(DMAX(S2, 0.)), 0.1*(tau + CellP[p].Density));
+                    if(dS2 > 0) {dt = DMIN(dt, 0.1*S_scale*Vi/sqrt(dS2));}
+                }
+                /* velocity-change criterion: |a| dt <= GR_TIMESTEP_DV_FRAC * v_sig/2, with a = HydroAccel the coordinate dv/dt recovered in the GR kick and
+                   v_sig/2 = csnd above: it limits the velocity jump per step in units of the local signal speed (the acceleration criterion's length scale,
+                   the kernel radius, does not bind in strong shear layers: the relativistic rotor fails without this). At a discontinuity |a| ~ 1/Delta_x */
+                if(ac > MIN_REAL_NUMBER) {dt = DMIN(dt, GR_TIMESTEP_DV_FRAC*csnd/ac);}
+            }
+#endif
 
 #ifdef MHD_BATTERY_MECHANISMS
             /* The battery builds a field out of nothing, at a rate set by the thermodynamic

@@ -72,14 +72,29 @@ double Get_Particle_Expected_Area(double h)
 }
 
 
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
 KOKKOS_INLINE_FUNCTION
 double Get_Gas_PhiField_P(int i_particle_id, struct particle_data *pp, struct gas_cell_data *cell)
 {
     //return cell[i_particle_id].PhiPred * cell[i_particle_id].Density / pp[i_particle_id].Mass; // volumetric phy-flux (requires extra term compared to mass-based flux)
     return cell[i_particle_id].PhiPred / pp[i_particle_id].Mass; // mass-based phi-flux
 }
-#endif /* DIVBCLEANING_DEDNER */
+#endif /* DIVBCLEANING_DEDNER || DIVBCLEANING_GR */
+
+
+#ifdef DIVBCLEANING_GR
+KOKKOS_INLINE_FUNCTION
+double Get_Gas_PhiField_DampingTimeInv_P(int i_particle_id, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    /* this timescale should always be returned as a -physical- time */
+#ifndef GR_CLEANING_LEGACY
+    /* parabolic damping of psihat: rate = alpha*sigma*c_h with sigma = K/Delta_x (Fedrigo & Lupi 2025), using the Route B cleaning speed of the particle */
+    return KAPPA_CLEANING*cell[i_particle_id].gr.alpha*cell[i_particle_id].CleaningSpeed/pp[i_particle_id].Get_Particle_Size();
+#else
+    return KAPPA_CLEANING_LEGACY*cell[i_particle_id].gr.alpha*fabs(0.5*cell[i_particle_id].MaxSignalVel)/pp[i_particle_id].Get_Particle_Size(); /* pre-Route-B scheme of Fedrigo & Lupi (2025) */
+#endif
+}
+#endif /* DIVBCLEANING_GR */
 
 
 #ifdef DIVBCLEANING_DEDNER

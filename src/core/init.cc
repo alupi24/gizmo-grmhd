@@ -957,6 +957,10 @@ void init(void)
     {
         int k __attribute__((unused)) = 0;
         CellP[i].InternalEnergyPred = CellP[i].InternalEnergy;
+#if defined(GENERAL_RELATIVITY) && defined(GR_ENTROPY_SWITCH)
+        {double rho0 = gr_get_primitive_density(CellP[i].Density, CellP[i].VelPred, &(CellP[i].gr), 0);
+         CellP[i].Entropy = gr_pressure_rho0_u(rho0, CellP[i].InternalEnergy) / pow(rho0, CellP[i].gamma_eos_value()); CellP[i].EntropyPred = CellP[i].Entropy;}
+#endif
         CellP[i].recent_refinement_flag = 0; // always initialize to zero, no recent refinements
 
         // re-match the predicted and initial velocities and B-field values, just to be sure //

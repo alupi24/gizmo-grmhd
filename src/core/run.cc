@@ -141,6 +141,9 @@ void run(void)
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
 
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
+#ifdef GENERAL_RELATIVITY
+        compute_initial_accelerations(); /* GR: seed HydroAccel/DtInternalEnergy from the initial fluxes (a first kick over a nominal step) */
+#endif
 
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion */
     }

@@ -26,6 +26,9 @@
 #include "predict_functions.h"       /* Get_Gas_PhiField_DampingTimeInv_P */
 #include "../gravity/ags_functions.h"    /* ags_density_isactive_P, ags_return_{min,max}soft_P, dm_fuzzy */
 #include "../eos/eos_functions.h"        /* set_eos_pressure_impl */
+#ifdef GENERAL_RELATIVITY
+#include "../gr/gr_kick_functions.h"     /* gr_drift_impl, gr_predict_impl */
+#endif
 #ifdef COSMIC_RAY_FLUID
 #include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
 #endif
@@ -44,7 +47,7 @@ void drift_extra_physics_P(int i, integertime tstart, integertime tend, double d
 #ifdef MAGNETIC
     double BphysVolphys_to_BcodeVolCode = 1 / All.cf_atime;
     cell[i].BPred += cell[i].DtB * (dt_entr * BphysVolphys_to_BcodeVolCode); // fluxes are always physical, convert to code units //
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
     double PhiphysVolphys_to_PhicodeVolCode = 1 / All.cf_a3inv; // for mass-based phi fluxes (otherwise coefficient is 1)
     double dtphi_code = (PhiphysVolphys_to_PhicodeVolCode) * cell[i].DtPhi;
     cell[i].PhiPred += dtphi_code  * dt_entr;
@@ -56,7 +59,7 @@ void drift_extra_physics_P(int i, integertime tstart, integertime tend, double d
 #endif
 #ifdef MHD_ALTERNATIVE_LEAPFROG_SCHEME
     cell[i].B = cell[i].BPred;
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
     cell[i].Phi=cell[i].PhiPred;
 #endif
 #endif
@@ -144,6 +147,12 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
             double dt_gravkick, dt_gravkick_pm, dt_hydrokick, dt_entr;
             dt_entr = dt_hydrokick = (time1 - time0) * unit_integertime_in_physical(i, pp);
             dt_gravkick = get_gravkick_factor_impl(time0, time1, timestep_dilation_factor(i, pp), tables);
+#ifdef GENERAL_RELATIVITY
+#if defined(HYDRO_MESHLESS_FINITE_MASS) || (defined(HYDRO_MESHLESS_FINITE_VOLUME) && (HYDRO_FIX_MESH_MOTION>=5))
+            gr_drift_impl(i, dt_drift, pp, cell); /* corrects the position drift and the kicked variables for the metric change along the path */
+#endif
+            gr_predict_impl(i, dt_hydrokick, pp, cell); /* predicts VelPred/InternalEnergyPred from the conserved variables (and zeroes HydroAccel/DtInternalEnergy) */
+#endif
             
 #ifdef PMGRID
             dt_gravkick_pm = get_gravkick_factor_impl(time0, time1, timestep_dilation_factor(-1, pp), tables);
@@ -166,7 +175,9 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
             pp[i].Mass = mfv_drifted_mass(pp[i].Mass, cell[i].DtMass, cell[i].MassTrue, dt_entr); cell[i].Mass = pp[i].Mass;
 #endif
             
-            cell[i].Density *= exp(-divv_fac);
+#ifndef GENERAL_RELATIVITY
+            cell[i].Density *= exp(-divv_fac); /* GR: the density is predicted below, from the volume change computed in the Riemann problems */
+#endif
             double etmp = cell[i].InternalEnergyPred + cell[i].DtInternalEnergy * dt_entr;
 #if defined(RADTRANSFER) && defined(RT_EVOLVE_ENERGY) /* block here to deal with tricky cases where radiation energy density is -much- larger than thermal */ 
             int kfreq; double erad_tot=0,tot_e_min=0,enew=0,int_e_min=0,dErad=0,rsol_fac=C_LIGHT_CODE_REDUCED/C_LIGHT_CODE; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {erad_tot+=cell[i].Rad_E_gamma_Pred[kfreq];}
@@ -188,11 +199,20 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
 #endif
             
 #if (HYDRO_FIX_MESH_MOTION > 0)
+#ifdef GENERAL_RELATIVITY
+            /* GR: the kernel radius and the density follow the volume variation computed in the Riemann problems (DtVolume; zero in pure hydro) */
+            const double divv_fac_gr = kernel_radius_drift_log_change(cell[i].DtVolume*dt_hydrokick/pow(pp[i].Get_Particle_Size(), NUMDIMS));
+            pp[i].KernelRadius *= exp(divv_fac_gr/((double)NUMDIMS));
+#else
             pp[i].KernelRadius *= h_drift_fac;
+#endif
             if(pp[i].KernelRadius < All.MinKernelRadius) {pp[i].KernelRadius = All.MinKernelRadius;}
             if(pp[i].KernelRadius > All.MaxKernelRadius) {pp[i].KernelRadius = All.MaxKernelRadius;}
 #ifdef ADAPTIVE_GRAVSOFT_FORALL
             if(1 & ADAPTIVE_GRAVSOFT_FORALL) {pp[i].AGS_KernelRadius = pp[i].KernelRadius;} /* gas is AGS-active, so needs to be set here to match updated KernelRadius */
+#endif
+#ifdef GENERAL_RELATIVITY
+            cell[i].Density *= exp(-divv_fac_gr);
 #endif
 #endif
             drift_extra_physics_P(i, time0, time1, dt_entr, pp, cell);

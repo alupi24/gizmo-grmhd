@@ -8,8 +8,20 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "gr_kick_functions.h"
 
 #ifdef GENERAL_RELATIVITY
+
+/* the first kick of every gas cell (over a nominal small step), so that HydroAccel/DtInternalEnergy hold the rates of the primitives from the initial fluxes */
+void compute_initial_accelerations(void)
+{
+    double dt_0 = DMIN(All.MinSizeTimestep*1.1, All.MaxSizeTimestep);
+    for(int i = 0; i < NumPart; i++)
+    {
+        if(P[i].Type != 0) {continue;}
+        gr_kick_impl(i, dt_0, P[i].Mass, P[i].Mass, 0, P, CellP);
+    }
+}
 
 /* prints the state of a failed conserved-to-primitive inversion (the con2prim itself never prints) */
 void gr_con2prim_report_failure(const char *where, int code, const struct gr_conservatives *cons, const struct gr_primitives *prims, const struct gr_metric *gr)
