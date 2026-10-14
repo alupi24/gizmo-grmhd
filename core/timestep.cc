@@ -635,6 +635,11 @@ integertime get_timestep(int p,		/*!< particle index */
               double S_scale = DMAX(sqrt(DMAX(S2,0.)), 0.1*(tau + CellP[p].Density));
               if(dS2 > 0) {dt = DMIN(dt, 0.1*S_scale*Vi/sqrt(dS2));}
              }
+             /* velocity-change criterion: |a| dt <= GR_TIMESTEP_DV_FRAC * v_sig/2, with a = HydroAccel the coordinate dv/dt recovered in the GR kick
+                (dS/dt -> dv/dt) and v_sig/2 = csnd above. It limits the velocity jump per step directly, in units of the local signal speed, rather
+                than the displacement error of the acceleration criterion (whose length scale is the gravitational softening); at a discontinuity
+                |a| ~ 1/Delta_x, so it scales with the resolution like the Courant condition */
+             if(ac > MIN_REAL_NUMBER) {dt = DMIN(dt, GR_TIMESTEP_DV_FRAC*csnd/ac);}
             }
 #endif
 

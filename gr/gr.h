@@ -21,6 +21,9 @@
 #define RIGHT_GAMMA_BOUNDARY (3)
 #define LEFT_GAMMA_BOUNDARY (-1)
 #define ZETA_CLEANING (1.0)
+#ifndef GR_TIMESTEP_DV_FRAC
+#define GR_TIMESTEP_DV_FRAC (0.01) /* time step: the change of the coordinate velocity per step, |a| dt, is limited to this fraction of the local signal speed (core/timestep.cc) */
+#endif
 #ifdef DIVBCLEANING_GR
 /* Divergence cleaning with a genuine cleaning speed c_h ("Route B", see gr/ROUTE_B_cleaning_notes.pdf):
    c_h = v_ms (1+f)/(1+f v_ms^2) from the local magnetosonic speed (Fedrigo & Lupi 2025), capped at the speed of light;

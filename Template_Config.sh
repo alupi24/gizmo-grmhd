@@ -123,6 +123,7 @@
 #DIVBCLEANING_GR                # turns on divergence cleaning in order to keep divB low (always on with GENERAL_RELATIVITY+MAGNETIC); cleaning speed c_h, damping K and boost f are set in gr/gr.h (see gr/ROUTE_B_cleaning_notes.pdf). DIVB_VARYING_CH is retired.
 #GR_CLEANING_LEGACY             # regression mode: reproduces the pre-Route-B cleaning (c_h=1 states, old damping, old signal-velocity boost) with the same binary; HLL/GForce only
 #GR_ENTROPY_SWITCH              # Compute the Internal Energy Density from the conserved Entropy function P/rho^Gamma in the case P_mag > P_th
+#GR_TIMESTEP_DV_FRAC=0.01        # GR time step: |dv/dt| dt <= GR_TIMESTEP_DV_FRAC * (signal speed), default 0.01
 #GEOMETRIC_REFINEMENT           # Hyper-Lagrangian refinement with particle splitting. Caution, the refinement parameters are hard-coded (mesh/merge_split.cc); MaxRefinementLevel is read from the parameterfile
 #GR_BETACOOLING                 # Beta cooling prescription, applied as source tests. Only works with GR_METRIC=1 and GR_METRIC=2. Beta parameter defined in gr.h
 #GR_REMOVE_GRAD=1000            # (GR_METRIC=2 only) Forcing the radial gradient of the pressure to be flat and damping B at the external edge of an accretion disc (Outer edge = GR_REMOVE_GRAD)
