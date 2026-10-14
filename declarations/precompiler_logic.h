@@ -1014,14 +1014,6 @@
 
 /* ----- exact closure of the effective MFM/MFV faces (HYDRO_CLOSED_FACES; scripts/projection_tests/RESULTS_exact_closure_ngb32.md).
          The closure potentials are relaxed inside the gradient loop, as extra Jacobi sweeps. ----- */
-#if defined(HYDRO_CLOSED_FACES_DIVB_ONLY)
-#if !defined(MAGNETIC)
-#error "HYDRO_CLOSED_FACES_DIVB_ONLY requires MAGNETIC"
-#endif
-#ifndef HYDRO_CLOSED_FACES
-#define HYDRO_CLOSED_FACES /* closed faces, used only for the face-sum divergence of B (the fluxes keep the original faces) */
-#endif
-#endif
 #if defined(HYDRO_CLOSED_FACES)
 #if !(defined(HYDRO_MESHLESS_FINITE_MASS) || defined(HYDRO_MESHLESS_FINITE_VOLUME)) || defined(HYDRO_REGULAR_GRID)
 #error "HYDRO_CLOSED_FACES requires the MFM or MFV effective faces"

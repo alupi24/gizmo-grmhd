@@ -76,9 +76,6 @@ extern struct gas_cell_data
     MyDouble B[3];                  /*!< actual B (conserved variable used for integration; can be B*V for flux schemes) */
     MyDouble DtB[3];                /*!< time derivative of B-field (of -conserved- B-field) */
     MyFloat divB;                   /*!< storage for the 'effective' divB used in div-cleaning procedure */
-#ifdef HYDRO_CLOSED_FACES_DIVB_ONLY
-    MyFloat divB_ClosureCorr;       /*!< closure correction of the face-sum divergence (closed minus original faces): added to divB only in the cleaning source */
-#endif
 #if defined(DIVBCLEANING_DEDNER) || defined(DIVBCLEANING_GR)
     MyDouble DtB_PhiCorr[3];        /*!< correction forces for mid-face update to phi-field */
     MyDouble PhiPred;               /*!< current value of Phi */
