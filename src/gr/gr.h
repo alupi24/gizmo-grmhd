@@ -3,14 +3,18 @@
  * GR hydro: Lupi 2023, MNRAS, 519, 1115. GR MHD and the divergence cleaning: Fedrigo & Lupi 2025, A&A, 700, A112
  * (the "Route B" cleaning speed is documented in gr/ROUTE_B_cleaning_notes.pdf).
  *
- * This header is included from declarations/precompiler_logic.h, i.e. before the Kokkos macros and the typedefs are
- * available, so it holds only plain-C declarations: no KOKKOS_INLINE_FUNCTION bodies here. The device-callable
- * physics (metric, tensor algebra, EOS, conserved variables, con2prim) lives in gr/gr_functions.h and
- * gr/gr_con2prim_functions.h, included from declarations/cell_data.h; the host-only routines are in gr/gr_utils.cc.
+ * This header is included from declarations/allvars.h right after the math types (Vec3, Mat3, SymmetricTensor2), which
+ * the GR structures are built on; it holds no function bodies. The device-callable physics (metric, tensor algebra, EOS,
+ * conserved variables, con2prim) lives in gr/gr_functions.h and gr/gr_con2prim_functions.h, included from
+ * declarations/cell_data.h; the host-only routines are in gr/gr_utils.cc.
  *
  * Port to the Kokkos code of the GR module of the C/C++ GIZMO branches (A. Lupi, G. Fedrigo). */
 #ifndef GR_GR_H
 #define GR_GR_H
+
+#include "../math_types/vec3.h"
+#include "../math_types/mat3.h"
+#include "../math_types/symmetric_tensor2.h"
 
 /* kick/drift of the conserved variables: implicit solver tolerance and iteration cap (otherwise a predictor-corrector) */
 #define IMPLICIT_SOLVER (1e-8)
@@ -41,26 +45,34 @@
 #endif
 #endif
 
-/* --- Metric coefficients at one point (3+1 split) --- */
+/* --- 3+1 metric coefficients at one point --- */
 struct gr_metric
 {
-    double gamma[6];           /*!< covariant spatial metric: xx, xy, xz, yy, yz, zz */
-    double ugamma[6];          /*!< contravariant spatial metric, same ordering */
-    double beta[3];            /*!< contravariant shift */
-    double alpha;              /*!< lapse */
-    double gdet;               /*!< sqrt of the spatial metric determinant */
-    int limiter;               /*!< 1 where the Lorentz factor is limited to GR_GAMMA_LIMITER (inside GAMMA_LIMITER_RADIUS): set with the metric, so that no caller needs the position */
+    SymmetricTensor2<double> gamma;   /*!< covariant spatial metric gamma_ij */
+    SymmetricTensor2<double> ugamma;  /*!< contravariant spatial metric gamma^ij */
+    Vec3<double> beta;                /*!< contravariant shift beta^i */
+    double alpha;                     /*!< lapse */
+    double gdet;                      /*!< sqrt of the spatial metric determinant */
+    int limiter;                      /*!< 1 where the Lorentz factor is limited to GR_GAMMA_LIMITER (inside GAMMA_LIMITER_RADIUS): set with the metric, so that no caller needs the position */
+};
+
+/* --- covariant 4-metric g_{mu nu} at one point --- */
+struct gr_metric4
+{
+    double tt;                        /*!< g_tt */
+    Vec3<double> ti;                  /*!< g_ti */
+    SymmetricTensor2<double> ij;      /*!< g_ij (= the covariant spatial metric) */
 };
 
 /* --- Conserved and primitive variables of one cell (the conserved ones are densitized, i.e. include sqrt(gamma)) --- */
 struct gr_conservatives
 {
-    double D;
-    double S[3];
-    double tau;
-    double p;                  /*!< total (gas + magnetic) pressure, carried along for the Riemann solvers */
+    double D;                         /*!< sqrt(gamma) rho0 W */
+    Vec3<double> S;                   /*!< sqrt(gamma) S_i (covariant momentum density) */
+    double tau;                       /*!< sqrt(gamma) (energy density - D) */
+    double p;                         /*!< total (gas + magnetic) pressure, carried along for the Riemann solvers */
 #ifdef MAGNETIC
-    double B[3];
+    Vec3<double> B;                   /*!< sqrt(gamma) B^i */
 #ifdef DIVBCLEANING_GR
     double phi;
 #endif
@@ -69,14 +81,15 @@ struct gr_conservatives
 
 struct gr_primitives
 {
-    double rho0;               /*!< rest-mass density */
-    double v[3];               /*!< velocity measured by the Eulerian observer (contravariant) */
-    double u;                  /*!< specific internal energy */
-    double p;                  /*!< gas pressure */
+    double rho0;                      /*!< rest-mass density */
+    Vec3<double> v;                   /*!< velocity measured by the Eulerian observer (contravariant) */
+    double u;                         /*!< specific internal energy */
+    double p;                         /*!< gas pressure */
 #ifdef MAGNETIC
-    double b[4];               /*!< rest-frame field (alpha*b^0, b_i) */
-    double bsq;                /*!< b^mu b_mu */
-    double B[3];               /*!< Eulerian field (primitive, not densitized) */
+    double b0;                        /*!< alpha b^0 of the rest-frame field (b^0 always appears multiplied by the lapse) */
+    Vec3<double> b;                   /*!< covariant spatial rest-frame field b_i */
+    double bsq;                       /*!< b^mu b_mu */
+    Vec3<double> B;                   /*!< Eulerian field B^i (primitive, not densitized) */
 #endif
 };
 

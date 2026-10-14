@@ -560,7 +560,7 @@ void init(void)
         CellP[i].DtInternalEnergy = 0;
         CellP[i].FaceClosureError = 0;
 #ifdef GENERAL_RELATIVITY
-        set_metric_coefficients(P[i].Pos.data, P[i].Potential, &(CellP[i].gr));
+        set_metric_coefficients(P[i].Pos, P[i].Potential, &(CellP[i].gr));
         CellP[i].DtMomentum = {}; CellP[i].DtEnergy = 0; CellP[i].DtVolume = 0;
 #endif
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE

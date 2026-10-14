@@ -1,8 +1,13 @@
 /* gr/gr_functions.h -- device-callable GR physics: tensor algebra, metric, EOS, conserved variables, rest-frame field.
  *
- * Every function here is a KOKKOS_INLINE_FUNCTION (host and device), takes plain arrays or the gr_* structs of
- * gr/gr.h, and reads simulation parameters only through All (the device sees the synced mirror). No particle
- * indices, no printf, no endrun: a caller that needs to report a failure does it on the host.
+ * Every function here is a KOKKOS_INLINE_FUNCTION (host and device), works on the math types of the trunk (Vec3,
+ * Mat3, SymmetricTensor2) and the gr_* structs of gr/gr.h, and reads simulation parameters only through All (the
+ * device sees the synced mirror). No particle indices, no printf, no endrun: a caller that needs to report a failure
+ * does it on the host.
+ *
+ * Conventions: the spatial metric is a SymmetricTensor2 (gamma[i][j] with symmetric indexing), vectors are Vec3<double>;
+ * gamma.matvec(v) lowers an index, ugamma.matvec(w) raises it, gamma.quad(v) = gamma_ij v^i v^j. The Eulerian velocity
+ * is v = (dx/dt + beta)/alpha (Vphys), the coordinate one dx/dt = alpha v - beta (Vcoord).
  *
  * Included from declarations/cell_data.h (after particle_data.h and the declaration of All), so that the cell
  * methods can use the GR density and sound speed; include it directly in any other header that needs it.
@@ -16,30 +21,17 @@
 #error "GR_METRIC=2 (superposed binary) and GR_METRIC<0 (tabulated metric) are not ported to the Kokkos code yet: use GR_METRIC=0 (flat) or 1 (Kerr)"
 #endif
 
-/* ------------------------------------------------------------------ tensor algebra (spatial metric packed as xx,xy,xz,yy,yz,zz) */
-KOKKOS_INLINE_FUNCTION void raise_lower_indices(const double g[], const double vin[], double vout[])
+/* ------------------------------------------------------------------ kinematics */
+/* Lorentz factor of the contravariant Eulerian velocity v; with gr_limiter the velocity is limited IN PLACE to the maximum
+   Lorentz factor GR_GAMMA_LIMITER. (The C code used long double here; device code uses double.) */
+KOKKOS_INLINE_FUNCTION double lorentz_factor(const SymmetricTensor2<double> &gamma, Vec3<double> &v, int gr_limiter)
 {
-    vout[0] = g[0]*vin[0] + g[1]*vin[1] + g[2]*vin[2];
-    vout[1] = g[1]*vin[0] + g[3]*vin[1] + g[4]*vin[2];
-    vout[2] = g[2]*vin[0] + g[4]*vin[1] + g[5]*vin[2];
-}
-
-KOKKOS_INLINE_FUNCTION double vector_sqnorm(const double gamma[], const double v_in[]) /* g_ij v^i v^j */
-{
-    double v_rl[3]; raise_lower_indices(gamma, v_in, v_rl);
-    return v_rl[0]*v_in[0] + v_rl[1]*v_in[1] + v_rl[2]*v_in[2];
-}
-
-/* Lorentz factor of the contravariant velocity v_cont; with gr_limiter the velocity is limited IN PLACE to the maximum Lorentz
-   factor GR_GAMMA_LIMITER. (The C code used long double here; device code uses double.) */
-KOKKOS_INLINE_FUNCTION double lorentz_factor(const double gamma[], double v_cont[], int gr_limiter)
-{
-    double denom, R = vector_sqnorm(gamma, v_cont);
+    double denom, R = gamma.quad(v);
     if(gr_limiter == 1)
     {
         double RMAX = 1.0 - 1./((double)GR_GAMMA_LIMITER*(double)GR_GAMMA_LIMITER);
-        double Rstar = 0.5*(RMAX + R - fabs(R - RMAX)), fac = sqrt(Rstar/(R + 1e-70));
-        v_cont[0] *= fac; v_cont[1] *= fac; v_cont[2] *= fac;
+        double Rstar = 0.5*(RMAX + R - fabs(R - RMAX));
+        v *= sqrt(Rstar/(R + 1e-70));
         denom = 1. - Rstar;
     }
     else
@@ -50,172 +42,124 @@ KOKKOS_INLINE_FUNCTION double lorentz_factor(const double gamma[], double v_cont
     return 1./sqrt(denom);
 }
 
-KOKKOS_INLINE_FUNCTION double spatial_metric_determinant(const double gamma[])
-{
-    return (-gamma[2]*gamma[2]*gamma[3] + 2.0*gamma[1]*gamma[2]*gamma[4] - gamma[0]*gamma[4]*gamma[4]
-            - gamma[1]*gamma[1]*gamma[5] + gamma[0]*gamma[3]*gamma[5]);
-}
-
-KOKKOS_INLINE_FUNCTION void unpack_4tensor(const double Gin[], double Gout[][4])
-{
-    Gout[0][0]=Gin[0]; Gout[1][1]=Gin[4]; Gout[2][2]=Gin[7]; Gout[3][3]=Gin[9];
-    Gout[0][1]=Gout[1][0]=Gin[1]; Gout[0][2]=Gout[2][0]=Gin[2]; Gout[0][3]=Gout[3][0]=Gin[3];
-    Gout[1][2]=Gout[2][1]=Gin[5]; Gout[1][3]=Gout[3][1]=Gin[6]; Gout[2][3]=Gout[3][2]=Gin[8];
-}
-
-KOKKOS_INLINE_FUNCTION void unpack_3tensor(const double Gin[], double Gout[][3])
-{
-    Gout[0][0]=Gin[0]; Gout[1][1]=Gin[3]; Gout[2][2]=Gin[5];
-    Gout[0][1]=Gout[1][0]=Gin[1]; Gout[0][2]=Gout[2][0]=Gin[2]; Gout[1][2]=Gout[2][1]=Gin[4];
-}
-
-KOKKOS_INLINE_FUNCTION void rotate_tensor(const double A[], double cosphi, double sinphi, double costh, double sinth, double Aprime[])
-{
-    double R[3][3] = {{costh*cosphi,-costh*sinphi,-sinth},{sinphi,cosphi,0},{sinth*cosphi,-sinth*sinphi,costh}};
-    double tmp[3][3] = {{A[0],A[1],A[2]},{A[1],A[3],A[4]},{A[2],A[4],A[5]}}, rtmp[3][3];
-    int i,j;
-    for(i=0;i<3;i++) {for(j=0;j<3;j++) {rtmp[i][j] = tmp[i][0]*R[j][0] + tmp[i][1]*R[j][1] + tmp[i][2]*R[j][2];}}
-    for(i=0;i<3;i++) {for(j=0;j<3;j++) {tmp[i][j] = R[i][0]*rtmp[0][j] + R[i][1]*rtmp[1][j] + R[i][2]*rtmp[2][j];}}
-    Aprime[0]=tmp[0][0]; Aprime[1]=tmp[0][1]; Aprime[2]=tmp[0][2]; Aprime[3]=tmp[1][1]; Aprime[4]=tmp[1][2]; Aprime[5]=tmp[2][2];
-}
-
-/* coordinate velocity dx/dt <-> velocity measured by the Eulerian observer: v = (dx/dt + beta)/alpha */
-KOKKOS_INLINE_FUNCTION void Vphys(double vel[], const double beta[], double alpha) {int k; for(k=0;k<3;k++) {vel[k] = (vel[k] + beta[k])/alpha;}}
-KOKKOS_INLINE_FUNCTION void Vcoord(double vel[], const double beta[], double alpha) {int k; for(k=0;k<3;k++) {vel[k] = alpha*vel[k] - beta[k];}}
+/* coordinate velocity dx/dt <-> velocity measured by the Eulerian observer */
+KOKKOS_INLINE_FUNCTION Vec3<double> Vphys(const Vec3<double> &vcoord, const struct gr_metric *gr) {return (vcoord + gr->beta)/gr->alpha;}
+KOKKOS_INLINE_FUNCTION Vec3<double> Vcoord(const Vec3<double> &vphys, const struct gr_metric *gr) {return gr->alpha*vphys - gr->beta;}
 
 /* ------------------------------------------------------------------ metric */
 /* 1 inside GAMMA_LIMITER_RADIUS of the origin (where the Lorentz factor is limited), measured from the raw coordinates as in the original code */
-KOKKOS_INLINE_FUNCTION int gr_limiter_flag(const double pos[3])
+KOKKOS_INLINE_FUNCTION int gr_limiter_flag(const Vec3<double> &pos)
 {
-    return (pos[0]*pos[0] + pos[1]*pos[1] + pos[2]*pos[2] <= (double)GAMMA_LIMITER_RADIUS*(double)GAMMA_LIMITER_RADIUS) ? 1 : 0;
+    return (pos.norm_sq() <= (double)GAMMA_LIMITER_RADIUS*(double)GAMMA_LIMITER_RADIUS) ? 1 : 0;
 }
 
-/* covariant 4-metric at pos, packed as tt, tx, ty, tz, xx, xy, xz, yy, yz, zz; the source is at the box centre if the box is periodic */
-KOKKOS_INLINE_FUNCTION void get_covariant_metric(const double pos[3], double gcov[10])
+/* covariant 4-metric at pos; the source is at the box centre if the box is periodic */
+KOKKOS_INLINE_FUNCTION void get_covariant_metric(const Vec3<double> &pos, struct gr_metric4 *g)
 {
-    double dp[3], dp2[3], R2 = 0; int i;
-    for(i=0;i<3;i++) {dp[i] = pos[i];}
+    Vec3<double> dp = pos;
 #ifdef BOX_PERIODIC
     dp[0] -= boxHalf_X; dp[1] -= boxHalf_Y; dp[2] -= boxHalf_Z;
     NEAREST_XYZ(dp[0],dp[1],dp[2],1);
 #endif
-    for(i=0;i<3;i++) {dp2[i] = dp[i]*dp[i]; R2 += dp2[i];}
 #if (GR_METRIC==0) /* Minkowski */
-    gcov[0] = -1; gcov[1]=gcov[2]=gcov[3]=gcov[5]=gcov[6]=gcov[8]=0.; gcov[4]=gcov[7]=gcov[9]=1.;
+    g->tt = -1; g->ti = Vec3<double>{0,0,0}; g->ij.set_isotropic(1.);
 #elif (GR_METRIC==1) /* Kerr: Boyer-Lindquist (USE_BOYERLINDQUIST) or Kerr-Schild coordinates */
     double M = All.MetricParams[0], a = All.MetricParams[1]*M, a2 = a*a;
-    double r2 = (R2 - a2 + sqrt((R2-a2)*(R2-a2) + 4*a2*dp2[2]))/2.;
+    double x2 = dp[0]*dp[0], y2 = dp[1]*dp[1], z2 = dp[2]*dp[2], R2 = x2 + y2 + z2;
+    double r2 = (R2 - a2 + sqrt((R2-a2)*(R2-a2) + 4*a2*z2))/2.;
 #ifndef USE_KERRSCHILD_COORDINATES
-    double sinth2 = 1. - dp2[2]/r2, rho2 = r2 + a2*dp2[2]/r2, delta = r2 - 2*M*sqrt(r2) + a2, Att = 2.0*M*sqrt(r2)/rho2;
-    gcov[0] = Att - 1.0;
+    double sinth2 = 1. - z2/r2, rho2 = r2 + a2*z2/r2, delta = r2 - 2*M*sqrt(r2) + a2, Att = 2.0*M*sqrt(r2)/rho2, xy2 = x2 + y2;
+    g->tt = Att - 1.0;
     double gtp = -Att*a*sinth2, gpp = (r2 + a2 + Att*a2*sinth2)*sinth2;
-    gcov[1] = -dp[1]/(dp2[0]+dp2[1])*gtp;
-    gcov[2] =  dp[0]/(dp2[0]+dp2[1])*gtp;
-    gcov[3] = 0.;
-    double fac1 = r2/rho2/delta, fac2 = gpp/((dp2[0]+dp2[1])*(dp2[0]+dp2[1])), fac3 = dp2[2]/rho2/(r2*sinth2), fac4 = (1 - dp2[2]*(r2+a2)/r2/rho2);
-    gcov[4] = fac1*dp2[0] + fac2*dp2[1] + fac3*dp2[0];
-    gcov[7] = fac1*dp2[1] + fac2*dp2[0] + fac3*dp2[1];
-    gcov[9] = (1-fac4)*(a2+r2)/delta + rho2/(r2*sinth2)*fac4*fac4;
-    gcov[5] = dp[0]*dp[1]*(fac1 - fac2 + fac3);
-    gcov[6] = (a2+r2)*dp[0]*dp[2]/rho2/delta - dp[0]*dp[2]/(r2*sinth2)*fac4;
-    gcov[8] = (a2+r2)*dp[1]*dp[2]/rho2/delta - dp[1]*dp[2]/(r2*sinth2)*fac4;
+    g->ti = Vec3<double>{-dp[1]/xy2*gtp, dp[0]/xy2*gtp, 0.};
+    double fac1 = r2/rho2/delta, fac2 = gpp/(xy2*xy2), fac3 = z2/rho2/(r2*sinth2), fac4 = (1 - z2*(r2+a2)/r2/rho2);
+    g->ij[0][0] = fac1*x2 + fac2*y2 + fac3*x2;
+    g->ij[1][1] = fac1*y2 + fac2*x2 + fac3*y2;
+    g->ij[2][2] = (1-fac4)*(a2+r2)/delta + rho2/(r2*sinth2)*fac4*fac4;
+    g->ij[0][1] = dp[0]*dp[1]*(fac1 - fac2 + fac3);
+    g->ij[0][2] = (a2+r2)*dp[0]*dp[2]/rho2/delta - dp[0]*dp[2]/(r2*sinth2)*fac4;
+    g->ij[1][2] = (a2+r2)*dp[1]*dp[2]/rho2/delta - dp[1]*dp[2]/(r2*sinth2)*fac4;
 #else
-    double rho2 = r2*r2 + a2*dp2[2], r = sqrt(r2), Mfac = 2*M*r*r*r/rho2, denom = r2 + a2;
-    double l_cov[4] = {1, (r*dp[0] + a*dp[1])/denom, (r*dp[1] - a*dp[0])/denom, dp[2]/r};
-    gcov[0] = -1 + Mfac*l_cov[0]*l_cov[0];
-    gcov[1] = Mfac*l_cov[0]*l_cov[1]; gcov[2] = Mfac*l_cov[0]*l_cov[2]; gcov[3] = Mfac*l_cov[0]*l_cov[3];
-    gcov[4] = 1 + Mfac*l_cov[1]*l_cov[1]; gcov[5] = Mfac*l_cov[1]*l_cov[2]; gcov[6] = Mfac*l_cov[1]*l_cov[3];
-    gcov[7] = 1 + Mfac*l_cov[2]*l_cov[2]; gcov[8] = Mfac*l_cov[2]*l_cov[3];
-    gcov[9] = 1 + Mfac*l_cov[3]*l_cov[3];
+    double rho2 = r2*r2 + a2*z2, r = sqrt(r2), Mfac = 2*M*r*r*r/rho2, denom = r2 + a2;
+    Vec3<double> l = {(r*dp[0] + a*dp[1])/denom, (r*dp[1] - a*dp[0])/denom, dp[2]/r}; /* spatial part of the null vector l_mu = (1, l_i) */
+    g->tt = -1 + Mfac;
+    g->ti = Mfac*l;
+    g->ij = Mfac*outer_product(l);
+    g->ij[0][0] += 1; g->ij[1][1] += 1; g->ij[2][2] += 1;
 #endif
 #endif
 }
 
-KOKKOS_INLINE_FUNCTION void get_upper_spatial_metric(const double gcov[6], double gcon[6])
+/* 3+1 coefficients (spatial metric and its inverse, shift, lapse, sqrt(gamma)) from the covariant 4-metric; limiter is left untouched */
+KOKKOS_INLINE_FUNCTION void gr_metric_from_4metric(const struct gr_metric4 *g, struct gr_metric *gr)
 {
-    double invdet = 1.e0/spatial_metric_determinant(gcov);
-    gcon[0] = (-gcov[4]*gcov[4] + gcov[3]*gcov[5])*invdet;
-    gcon[1] = ( gcov[2]*gcov[4] - gcov[1]*gcov[5])*invdet;
-    gcon[2] = (-gcov[2]*gcov[3] + gcov[1]*gcov[4])*invdet;
-    gcon[3] = (-gcov[2]*gcov[2] + gcov[0]*gcov[5])*invdet;
-    gcon[4] = ( gcov[1]*gcov[2] - gcov[0]*gcov[4])*invdet;
-    gcon[5] = (-gcov[1]*gcov[1] + gcov[0]*gcov[3])*invdet;
-}
-
-/* contravariant spatial metric, shift and lapse from the covariant 4-metric */
-KOKKOS_INLINE_FUNCTION void get_extra_metric_coefficients(const double *gcov, double *gcon, double beta[3], double *alpha)
-{
-    get_upper_spatial_metric(gcov+4, gcon);
-    double betacov[3] = {gcov[1], gcov[2], gcov[3]};
-    raise_lower_indices(gcon, betacov, beta);
-    double beta2 = beta[0]*gcov[1] + beta[1]*gcov[2] + beta[2]*gcov[3];
-    *alpha = sqrt(beta2 - gcov[0]);
+    gr->gamma = g->ij;
+    double det = gr->gamma.invert(gr->ugamma);
+    gr->beta = gr->ugamma.matvec(g->ti);            /* beta^i = gamma^ij g_tj */
+    gr->alpha = sqrt(dot(gr->beta, g->ti) - g->tt); /* alpha^2 = beta_i beta^i - g_tt */
+    gr->gdet = sqrt(det);
 }
 
 /* fills the metric structure at pos (potential: Newtonian correction of the lapse, only with self-gravity) */
-KOKKOS_INLINE_FUNCTION void set_metric_coefficients(const double pos[3], double potential, struct gr_metric *gr)
+KOKKOS_INLINE_FUNCTION void set_metric_coefficients(const Vec3<double> &pos, double potential, struct gr_metric *gr)
 {
-    double gcov[10]; int k;
-    get_covariant_metric(pos, gcov);
-    for(k=0;k<6;k++) {gr->gamma[k] = gcov[k+4];}
-    get_extra_metric_coefficients(gcov, gr->ugamma, gr->beta, &(gr->alpha));
-    gr->gdet = sqrt(spatial_metric_determinant(gr->gamma));
+    struct gr_metric4 g;
+    get_covariant_metric(pos, &g);
+    gr_metric_from_4metric(&g, gr);
 #ifndef SELFGRAVITY_OFF
     gr->alpha = sqrt(gr->alpha*gr->alpha + 2*potential);
 #endif
     gr->limiter = gr_limiter_flag(pos);
 }
 
-/* spatial derivatives of the 4-metric, lapse and shift at dp, by centred finite differences (Cartesian directions) */
-KOKKOS_INLINE_FUNCTION void compute_metric_jacobian(const double dp[3], double deriv[][4][4], double dalpha[], double dbeta[][3])
+/* element (mu,nu) of a covariant 4-metric (0 = t) */
+KOKKOS_INLINE_FUNCTION double gr_metric4_get(const struct gr_metric4 *g, int mu, int nu)
 {
-    int dir,j,k; double dpH[3], dpL[3], gcovH[10], gcovL[10], alphaH, alphaL, betaH[3], betaL[3], gtmpH[4][4], gtmpL[4][4], gcon[6];
-    for(dir=0;dir<3;dir++) {dpH[dir]=dpL[dir]=dp[dir];}
-    for(dir=0;dir<3;dir++)
+    if(mu == 0 && nu == 0) {return g->tt;}
+    if(mu == 0) {return g->ti[nu-1];}
+    if(nu == 0) {return g->ti[mu-1];}
+    return g->ij[mu-1][nu-1];
+}
+
+/* spatial derivatives of the 4-metric (dg[dir] = d g_{mu nu}/dx^dir), lapse and shift (dbeta[dir][j] = d beta^j/dx^dir) at pos,
+   by centred finite differences along the Cartesian directions */
+KOKKOS_INLINE_FUNCTION void compute_metric_jacobian(const Vec3<double> &pos, struct gr_metric4 dg[3], Vec3<double> &dalpha, Mat3<double> &dbeta)
+{
+    const double fac = 0.5/GR_EPS_TOLERANCE;
+    for(int dir = 0; dir < 3; dir++)
     {
-        dpH[dir] += GR_EPS_TOLERANCE; dpL[dir] -= GR_EPS_TOLERANCE;
-        get_covariant_metric(dpH, gcovH); get_covariant_metric(dpL, gcovL);
-        get_extra_metric_coefficients(gcovH, gcon, betaH, &alphaH); get_extra_metric_coefficients(gcovL, gcon, betaL, &alphaL);
-        unpack_4tensor(gcovH, gtmpH); unpack_4tensor(gcovL, gtmpL);
-        for(j=0;j<4;j++)
-        {
-            deriv[dir][j][j] = 0.5*(gtmpH[j][j]-gtmpL[j][j])/GR_EPS_TOLERANCE;
-            for(k=j+1;k<4;k++) {deriv[dir][j][k] = deriv[dir][k][j] = 0.5*(gtmpH[j][k]-gtmpL[j][k])/GR_EPS_TOLERANCE;}
-        }
-        dalpha[dir] = 0.5*(alphaH-alphaL)/GR_EPS_TOLERANCE;
-        for(j=0;j<3;j++) {dbeta[dir][j] = 0.5*(betaH[j]-betaL[j])/GR_EPS_TOLERANCE;}
-        dpH[dir]=dpL[dir]=dp[dir];
+        Vec3<double> pH = pos, pL = pos; pH[dir] += GR_EPS_TOLERANCE; pL[dir] -= GR_EPS_TOLERANCE;
+        struct gr_metric4 gH, gL; struct gr_metric mH, mL;
+        get_covariant_metric(pH, &gH); get_covariant_metric(pL, &gL);
+        gr_metric_from_4metric(&gH, &mH); gr_metric_from_4metric(&gL, &mL);
+        dg[dir].tt = fac*(gH.tt - gL.tt);
+        dg[dir].ti = fac*(gH.ti - gL.ti);
+        dg[dir].ij = fac*(gH.ij - gL.ij);
+        dalpha[dir] = fac*(mH.alpha - mL.alpha);
+        dbeta[dir] = fac*(mH.beta - mL.beta);
     }
 }
 
 /* extrinsic curvature K_ij = -alpha Gamma^0_ij and the metric derivatives at pos, given the metric there */
-KOKKOS_INLINE_FUNCTION void get_metric_derivatives(const double pos[3], const struct gr_metric *gr, double Kij[][3], double d_gij[][4][4], double dalpha[], double dbeta[][3])
+KOKKOS_INLINE_FUNCTION void get_metric_derivatives(const Vec3<double> &pos, const struct gr_metric *gr, SymmetricTensor2<double> &Kij, struct gr_metric4 dg[3], Vec3<double> &dalpha, Mat3<double> &dbeta)
 {
-    int i,j,w; double invalpha2 = 1./(gr->alpha*gr->alpha), gmunu[4][4];
-    gmunu[0][0] = -invalpha2;
-    gmunu[0][1]=gmunu[1][0]=gr->beta[0]*invalpha2; gmunu[0][2]=gmunu[2][0]=gr->beta[1]*invalpha2; gmunu[0][3]=gmunu[3][0]=gr->beta[2]*invalpha2;
-    gmunu[1][1]=gr->ugamma[0] - gr->beta[0]*gr->beta[0]*invalpha2;
-    gmunu[2][2]=gr->ugamma[3] - gr->beta[1]*gr->beta[1]*invalpha2;
-    gmunu[3][3]=gr->ugamma[5] - gr->beta[2]*gr->beta[2]*invalpha2;
-    gmunu[1][2]=gmunu[2][1]=gr->ugamma[1] - gr->beta[0]*gr->beta[1]*invalpha2;
-    gmunu[1][3]=gmunu[3][1]=gr->ugamma[2] - gr->beta[0]*gr->beta[2]*invalpha2;
-    gmunu[2][3]=gmunu[3][2]=gr->ugamma[4] - gr->beta[1]*gr->beta[2]*invalpha2;
-    compute_metric_jacobian(pos, d_gij, dalpha, dbeta);
-    for(i=0;i<3;i++) {for(j=0;j<3;j++)
+    double invalpha2 = 1./(gr->alpha*gr->alpha);
+    double g00 = -invalpha2; Vec3<double> g0i = invalpha2*gr->beta; /* g^{00}, g^{0i} of the inverse 4-metric */
+    compute_metric_jacobian(pos, dg, dalpha, dbeta);
+    for(int i = 0; i < 3; i++) {for(int j = i; j < 3; j++)
     {
-        Kij[i][j] = 0.5*gmunu[0][0]*(d_gij[j][0][i+1] + d_gij[i][0][j+1]); /* the time derivative of the metric is zero */
-        for(w=1;w<4;w++) {Kij[i][j] += 0.5*gmunu[0][w]*(d_gij[j][w][i+1] + d_gij[i][w][j+1] - d_gij[w-1][i+1][j+1]);}
-        Kij[i][j] *= -gr->alpha;
+        double K = 0.5*g00*(gr_metric4_get(&dg[j], 0, i+1) + gr_metric4_get(&dg[i], 0, j+1)); /* the time derivative of the metric is zero */
+        for(int w = 1; w < 4; w++) {K += 0.5*g0i[w-1]*(gr_metric4_get(&dg[j], w, i+1) + gr_metric4_get(&dg[i], w, j+1) - gr_metric4_get(&dg[w-1], i+1, j+1));}
+        Kij[i][j] = -gr->alpha*K;
     }}
 }
 
 /* ------------------------------------------------------------------ equation of state (ideal gas with GAMMA_DEFAULT, as in the con2prim) */
 /* rest-mass density from the conserved density D = sqrt(gamma) rho0 W and the coordinate velocity */
-KOKKOS_INLINE_FUNCTION double gr_get_primitive_density(double density, const double velocity[], const struct gr_metric *coeffs, int gr_limiter)
+KOKKOS_INLINE_FUNCTION double gr_get_primitive_density(double density, const Vec3<double> &vcoord, const struct gr_metric *gr, int gr_limiter)
 {
-    double vel_p[3]; int k; for(k=0;k<3;k++) {vel_p[k] = velocity[k];}
-    Vphys(vel_p, coeffs->beta, coeffs->alpha);
-    return density/lorentz_factor(coeffs->gamma, vel_p, gr_limiter)/coeffs->gdet;
+    Vec3<double> vphys = Vphys(vcoord, gr);
+    return density/lorentz_factor(gr->gamma, vphys, gr_limiter)/gr->gdet;
 }
 
 KOKKOS_INLINE_FUNCTION double gr_pressure_rho0_u(double rho0, double u)
@@ -263,41 +207,36 @@ KOKKOS_INLINE_FUNCTION double gr_sound_speed(double gamma_eos, double pressure, 
 }
 
 /* ------------------------------------------------------------------ conserved variables from the primitives */
-KOKKOS_INLINE_FUNCTION void gr_get_conservative_variables(const struct gr_primitives *prims, struct gr_conservatives *cons, double Wlorentz, const double gamma[], double gdet)
+KOKKOS_INLINE_FUNCTION void gr_get_conservative_variables(const struct gr_primitives *prims, struct gr_conservatives *cons, double Wlorentz, const struct gr_metric *gr)
 {
-    double hstar = 1.0 + prims->u + prims->p/prims->rho0, Pstar = prims->p, v_cov[3];
-    raise_lower_indices(gamma, prims->v, v_cov);
+    double hstar = 1.0 + prims->u + prims->p/prims->rho0, Pstar = prims->p, gdet = gr->gdet;
+    Vec3<double> v_cov = gr->gamma.matvec(prims->v);
     cons->D = gdet*prims->rho0*Wlorentz;
-    cons->S[0] = cons->S[1] = cons->S[2] = 0; cons->tau = 0;
+    cons->S = Vec3<double>{0,0,0}; cons->tau = 0;
 #ifdef MAGNETIC
-    cons->B[0] = gdet*prims->B[0]; cons->B[1] = gdet*prims->B[1]; cons->B[2] = gdet*prims->B[2];
+    cons->B = gdet*prims->B;
     Pstar += prims->bsq/2; hstar += prims->bsq/prims->rho0;
-    cons->S[0] = -gdet*prims->b[0]*prims->b[1];
-    cons->S[1] = -gdet*prims->b[0]*prims->b[2];
-    cons->S[2] = -gdet*prims->b[0]*prims->b[3];
-    cons->tau  = -gdet*prims->b[0]*prims->b[0];
+    cons->S = (-gdet*prims->b0)*prims->b;
+    cons->tau = -gdet*prims->b0*prims->b0;
 #endif
     double DhW = cons->D*Wlorentz*hstar;
-    cons->S[0] += DhW*v_cov[0]; cons->S[1] += DhW*v_cov[1]; cons->S[2] += DhW*v_cov[2];
+    cons->S += DhW*v_cov;
     cons->tau += DhW - gdet*Pstar - cons->D;
     if(cons->tau < 0) {cons->tau = MIN_REAL_NUMBER;} /* (the C code printed a warning here) */
     cons->p = Pstar;
 }
 
 #ifdef MAGNETIC
-/* b^2 = b^mu b_mu of the Eulerian field B (primitive) and the Eulerian velocity vphys (contravariant); fills bvec with (alpha b^0, b_i).
-   vphys may be limited in place (gr_limiter). */
-KOKKOS_INLINE_FUNCTION double gr_bfield_restframe(const struct gr_metric *gr, const double B[3], double vphys[3], double bvec[4], int gr_limiter)
+/* rest-frame field of the Eulerian field B (primitive) and the Eulerian velocity vphys (contravariant): fills b0 = alpha b^0 and the
+   covariant b_i, returns b^2 = b^mu b_mu. vphys may be limited in place (gr_limiter). */
+KOKKOS_INLINE_FUNCTION double gr_bfield_restframe(const struct gr_metric *gr, const Vec3<double> &B, Vec3<double> &vphys, double *b0, Vec3<double> *b, int gr_limiter)
 {
-    double Wl = lorentz_factor(gr->gamma, vphys, gr_limiter), tmpvec[3], beta_cov[3], bmag = 0; int k;
-    raise_lower_indices(gr->gamma, vphys, tmpvec);
-    for(k=0;k<3;k++) {bmag += B[k]*tmpvec[k];}
-    bvec[0] = Wl*bmag; /* b^0 always appears multiplied by alpha */
-    for(k=0;k<3;k++) {tmpvec[k] = B[k]/Wl + Wl*bmag*(vphys[k] - gr->beta[k]/gr->alpha);}
-    raise_lower_indices(gr->gamma, gr->beta, beta_cov);
-    raise_lower_indices(gr->gamma, tmpvec, bvec+1);
-    for(k=1;k<4;k++) {bvec[k] += beta_cov[k-1]/gr->alpha*bvec[0];}
-    return bmag*bmag + vector_sqnorm(gr->gamma, B)/Wl/Wl;
+    double Wl = lorentz_factor(gr->gamma, vphys, gr_limiter);
+    double bmag = dot(B, gr->gamma.matvec(vphys)); /* B^i v_i */
+    *b0 = Wl*bmag;
+    Vec3<double> tmp = B/Wl + (Wl*bmag)*(vphys - gr->beta/gr->alpha);
+    *b = gr->gamma.matvec(tmp) + ((*b0)/gr->alpha)*gr->gamma.matvec(gr->beta);
+    return bmag*bmag + gr->gamma.quad(B)/Wl/Wl;
 }
 
 /* relativistic Alfven speed v_A = sqrt(b^2/(rho0 h + b^2)), with rho0 h = rho0 (1+u) + P */

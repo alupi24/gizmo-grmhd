@@ -98,6 +98,30 @@ struct SymmetricTensor2 {
         data[0] = val; data[1] = val; data[2] = val;
         data[3] = T(0); data[4] = T(0); data[5] = T(0);
     }
+
+    // Determinant.  xx=0 yy=1 zz=2 xy=3 yz=4 xz=5
+    GIZMO_GPU_FUNCTION T det() const noexcept {
+        return data[0] * (data[1] * data[2] - data[4] * data[4])
+             - data[3] * (data[3] * data[2] - data[4] * data[5])
+             + data[5] * (data[3] * data[4] - data[1] * data[5]);
+    }
+
+    // Invert the tensor (the inverse of a symmetric matrix is symmetric), writing the result into `inv`; returns the determinant.
+    GIZMO_GPU_FUNCTION T invert(SymmetricTensor2& inv) const noexcept {
+        T d = det();
+        if(d == T(0) || d != d) { inv = SymmetricTensor2{}; return T(0); }
+        T inv_d = T(1) / d;
+        inv.data[0] = (data[1] * data[2] - data[4] * data[4]) * inv_d; // xx
+        inv.data[1] = (data[0] * data[2] - data[5] * data[5]) * inv_d; // yy
+        inv.data[2] = (data[0] * data[1] - data[3] * data[3]) * inv_d; // zz
+        inv.data[3] = (data[5] * data[4] - data[3] * data[2]) * inv_d; // xy
+        inv.data[4] = (data[3] * data[5] - data[0] * data[4]) * inv_d; // yz
+        inv.data[5] = (data[3] * data[4] - data[1] * data[5]) * inv_d; // xz
+        return d;
+    }
+
+    // Quadratic form: v . (this * v)
+    GIZMO_GPU_FUNCTION T quad(const Vec3<T>& v) const noexcept { return dot(matvec(v), v); }
 };
 
 template<typename T>

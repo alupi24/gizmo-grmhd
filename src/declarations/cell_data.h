@@ -571,7 +571,7 @@ extern struct gas_cell_data
 
     GIZMO_GPU_FUNCTION inline double density_for_energy() const { /*!< density used in energy equations (accounts for SPH pressure formulation) */
 #ifdef GENERAL_RELATIVITY
-        {double vtmp[3] = {VelPred[0], VelPred[1], VelPred[2]}; return gr_get_primitive_density(Density, vtmp, &gr, gr.limiter);} /* GR: the rest-mass density */
+        return gr_get_primitive_density(Density, VelPred, &gr, gr.limiter); /* GR: the rest-mass density */
 #endif
 #ifdef HYDRO_PRESSURE_SPH
         return EgyWtDensity;

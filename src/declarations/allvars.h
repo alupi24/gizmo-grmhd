@@ -64,6 +64,9 @@
 #include "../math_types/vec3.h"
 #include "../math_types/mat3.h"
 #include "../math_types/symmetric_tensor2.h"
+#ifdef GENERAL_RELATIVITY
+#include "../gr/gr.h" /* GR structures (built on the math types above) and constants */
+#endif
 
 #ifdef CHIMES
 #include "../cooling/chimes/chimes_proto.h"

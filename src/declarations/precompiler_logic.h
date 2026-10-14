@@ -1846,10 +1846,9 @@
 #define EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
 #endif
 
-/* ----- general relativity: the header with the GR structures must follow every definition above (gr_metric is a member of the cell data) ----- */
+/* ----- general relativity: guards (the GR structures are in gr/gr.h, included from allvars.h after the math types) ----- */
 #ifdef GENERAL_RELATIVITY
 #if !defined(PREVENT_PARTICLE_MERGE_SPLIT)
 #error "the merge/split of gas cells is not ported for GENERAL_RELATIVITY in the Kokkos code yet: add PREVENT_PARTICLE_MERGE_SPLIT to the Config"
 #endif
-#include "../gr/gr.h"
 #endif

@@ -79,36 +79,34 @@ KOKKOS_INLINE_FUNCTION int gr_c2p_twod_newton_raphson(double x[], const struct k
 /* primitives from the (densitized) conserved variables; prims->u and prims->v on input are the initial guess (the previous primitives) */
 KOKKOS_INLINE_FUNCTION double gr_get_primitive_variables(const struct gr_conservatives *cons_pred, struct gr_primitives *prims, const struct gr_metric *gr, int gr_limiter)
 {
-    double x_2d[2], Svec[3], uSvec[3], tau, dens, gamma, inv_sqrtg = 1./gr->gdet, rho0, u, p, rhoh, W_last, W, vsq, QdotB, QdB_o_W;
+    double x_2d[2], tau, dens, gamma, inv_sqrtg = 1./gr->gdet, rho0, u, p, rhoh, W_last, W, vsq, QdotB, QdB_o_W;
     int i_increase, retval;
     struct kernel_NR kernel;
     dens = cons_pred->D*inv_sqrtg;
-    Svec[0] = cons_pred->S[0]*inv_sqrtg; Svec[1] = cons_pred->S[1]*inv_sqrtg; Svec[2] = cons_pred->S[2]*inv_sqrtg;
+    Vec3<double> Svec = inv_sqrtg*cons_pred->S;          /* S_i */
     tau = cons_pred->tau*inv_sqrtg;
-    raise_lower_indices(gr->ugamma, Svec, uSvec);
+    Vec3<double> uSvec = gr->ugamma.matvec(Svec);        /* S^i */
 #ifdef GR_TEST_PARTICLE
-    W = (tau + dens)/sqrt((tau + dens)*(tau + dens) - (uSvec[0]*Svec[0] + uSvec[1]*Svec[1] + uSvec[2]*Svec[2]));
+    W = (tau + dens)/sqrt((tau + dens)*(tau + dens) - dot(uSvec, Svec));
     prims->rho0 = dens/W;
-    prims->v[0] = uSvec[0]/(tau + dens); prims->v[1] = uSvec[1]/(tau + dens); prims->v[2] = uSvec[2]/(tau + dens);
+    prims->v = uSvec/(tau + dens);
     prims->u = 1e-20; prims->p = 0;
     return W;
 #endif
 #ifdef MAGNETIC
-    double Bcov[3];
-    prims->B[0] = cons_pred->B[0]*inv_sqrtg; prims->B[1] = cons_pred->B[1]*inv_sqrtg; prims->B[2] = cons_pred->B[2]*inv_sqrtg;
-    raise_lower_indices(gr->gamma, prims->B, Bcov);
-    kernel.Bsq = Bcov[0]*prims->B[0] + Bcov[1]*prims->B[1] + Bcov[2]*prims->B[2];
-    QdotB = Svec[0]*prims->B[0] + Svec[1]*prims->B[1] + Svec[2]*prims->B[2];
+    prims->B = inv_sqrtg*cons_pred->B;
+    kernel.Bsq = gr->gamma.quad(prims->B);
+    QdotB = dot(Svec, prims->B);
     kernel.QdotBsq = QdotB*QdotB;
     kernel.half_Bsq = 0.5*kernel.Bsq;
 #else
     kernel.Bsq = 0.0; QdotB = 0.0; kernel.QdotBsq = 0.0; kernel.half_Bsq = 0.0;
 #endif
     kernel.Qdotn = -(tau + dens);
-    kernel.Qtsq = (uSvec[0]*Svec[0] + uSvec[1]*Svec[1] + uSvec[2]*Svec[2]);
+    kernel.Qtsq = dot(uSvec, Svec);
     kernel.D = dens;
     /* initial guess from the previous primitives */
-    vsq = vector_sqnorm(gr->gamma, prims->v);
+    vsq = gr->gamma.quad(prims->v);
     if(vsq > 1) {gamma = lorentz_factor(gr->gamma, prims->v, gr_limiter); vsq = 1. - 1./gamma/gamma;}
     gamma = 1./sqrt(1.0 - vsq);
     if(!isfinite(gamma)) {return -5.;}
@@ -144,11 +142,11 @@ KOKKOS_INLINE_FUNCTION double gr_get_primitive_variables(const struct gr_conserv
     prims->u = u/rho0;
     prims->p = p;
     double W_inv = 1./(W + kernel.Bsq);
-    prims->v[0] = W_inv*uSvec[0]; prims->v[1] = W_inv*uSvec[1]; prims->v[2] = W_inv*uSvec[2];
+    prims->v = W_inv*uSvec;
 #ifdef MAGNETIC
     QdB_o_W = QdotB/W;
     prims->bsq = kernel.Bsq*(1. - vsq) + QdB_o_W*QdB_o_W;
-    prims->v[0] += W_inv*QdB_o_W*prims->B[0]; prims->v[1] += W_inv*QdB_o_W*prims->B[1]; prims->v[2] += W_inv*QdB_o_W*prims->B[2];
+    prims->v += (W_inv*QdB_o_W)*prims->B;
 #endif
     lorentz_factor(gr->gamma, prims->v, gr_limiter); /* limits the velocity in place where required */
     if((rho0 <= 0.) || (u <= 0.)) {return -1;}

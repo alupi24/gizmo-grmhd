@@ -25,30 +25,21 @@ void gr_con2prim_report_failure(const char *where, int code, const struct gr_con
 #ifdef MAGNETIC
     printf(" *Bx          = %26.16e \n *By          = %26.16e \n *Bz          = %26.16e \n *bsq         = %26.16e \n", prims->B[0], prims->B[1], prims->B[2], prims->bsq);
 #endif
-    printf(" metric: alpha %g gdet %g beta %g %g %g gamma %g %g %g %g %g %g\n", gr->alpha, gr->gdet, gr->beta[0], gr->beta[1], gr->beta[2],
-           gr->gamma[0], gr->gamma[1], gr->gamma[2], gr->gamma[3], gr->gamma[4], gr->gamma[5]);
+    printf(" metric: alpha %g gdet %g beta %g %g %g gamma xx %g xy %g xz %g yy %g yz %g zz %g\n", gr->alpha, gr->gdet, gr->beta[0], gr->beta[1], gr->beta[2],
+           gr->gamma[0][0], gr->gamma[0][1], gr->gamma[0][2], gr->gamma[1][1], gr->gamma[1][2], gr->gamma[2][2]);
     fflush(stdout);
 }
 
 #ifdef PARTICLE_EXCISION
-/* damps the velocity (and field) of a cell approaching the horizon, as in the original GR code */
+/* damps the Eulerian velocity (and the field) of a cell approaching the horizon, as in the original GR code */
 void smooth_conservatives_inside_horizon(int i, double r, double r_EH, double M)
 {
-    double v_local[3], v_localPred[3]; int k;
-    for(k=0;k<3;k++) {v_local[k] = P[i].Vel[k]; v_localPred[k] = CellP[i].VelPred[k];}
-    Vphys(v_local, CellP[i].gr.beta, CellP[i].gr.alpha);
-    Vphys(v_localPred, CellP[i].gr.beta, CellP[i].gr.alpha);
+    const struct gr_metric *gr = &(CellP[i].gr);
     double exponent = (0.5*sqrt(GR_EXCISION_RADIUS*M)*(r - r_EH)*(r - r_EH))/(r_EH - 0.4), Chi = exp(-exponent);
-    for(k=0;k<3;k++) {v_local[k] *= Chi; v_localPred[k] *= Chi;}
-    Vcoord(v_local, CellP[i].gr.beta, CellP[i].gr.alpha);
-    Vcoord(v_localPred, CellP[i].gr.beta, CellP[i].gr.alpha);
-    for(k=0;k<3;k++) {P[i].Vel[k] = v_local[k]; CellP[i].VelPred[k] = v_localPred[k];}
+    P[i].Vel = Vcoord(Chi*Vphys(P[i].Vel, gr), gr);
+    CellP[i].VelPred = Vcoord(Chi*Vphys(CellP[i].VelPred, gr), gr);
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && (HYDRO_FIX_MESH_MOTION>=5)
-    double par_v_local[3]; for(k=0;k<3;k++) {par_v_local[k] = CellP[i].ParticleVel[k];}
-    Vphys(par_v_local, CellP[i].gr.beta, CellP[i].gr.alpha);
-    for(k=0;k<3;k++) {par_v_local[k] *= Chi;}
-    Vcoord(par_v_local, CellP[i].gr.beta, CellP[i].gr.alpha);
-    for(k=0;k<3;k++) {CellP[i].ParticleVel[k] = par_v_local[k];}
+    CellP[i].ParticleVel = Vcoord(Chi*Vphys(CellP[i].ParticleVel, gr), gr);
 #endif
 #ifdef MAGNETIC
     CellP[i].B *= Chi; CellP[i].BPred *= Chi;
@@ -59,7 +50,7 @@ void smooth_conservatives_inside_horizon(int i, double r, double r_EH, double M)
 void check_boundary(int target)
 {
 #if (GR_METRIC==1)
-    double r_min = sqrt(P[target].Pos[0]*P[target].Pos[0] + P[target].Pos[1]*P[target].Pos[1] + P[target].Pos[2]*P[target].Pos[2]);
+    double r_min = P[target].Pos.norm();
     double a[3] = {0, 0, All.MetricParams[1]};
     double horizon = EHradius(All.MetricParams[0], a);
     if(r_min < GR_EXCISION_RADIUS*horizon) {P[target].Mass = 0;}

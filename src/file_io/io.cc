@@ -1033,8 +1033,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
-                    double vcoord[3] = {P[pindex].Vel[0], P[pindex].Vel[1], P[pindex].Vel[2]};
-                    *fp++ = (MyOutputFloat) gr_get_primitive_density(CellP[pindex].Density, vcoord, &(CellP[pindex].gr), CellP[pindex].gr.limiter);
+                    *fp++ = (MyOutputFloat) gr_get_primitive_density(CellP[pindex].Density, P[pindex].Vel, &(CellP[pindex].gr), CellP[pindex].gr.limiter);
                     n++;
                 }
             break;
@@ -1043,8 +1042,12 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
-                    double gcov_tmp[10]; get_covariant_metric(P[pindex].Pos.data, gcov_tmp);
-                    for(k=0;k<10;k++) {fp[k] = (MyOutputFloat) gcov_tmp[k];}
+                    struct gr_metric4 g; get_covariant_metric(P[pindex].Pos, &g);
+                    /* packed as tt, tx, ty, tz, xx, xy, xz, yy, yz, zz (the ordering of the C/C++ GR code), then alpha and sqrt(gamma) */
+                    fp[0] = (MyOutputFloat) g.tt;
+                    fp[1] = (MyOutputFloat) g.ti[0]; fp[2] = (MyOutputFloat) g.ti[1]; fp[3] = (MyOutputFloat) g.ti[2];
+                    fp[4] = (MyOutputFloat) g.ij[0][0]; fp[5] = (MyOutputFloat) g.ij[0][1]; fp[6] = (MyOutputFloat) g.ij[0][2];
+                    fp[7] = (MyOutputFloat) g.ij[1][1]; fp[8] = (MyOutputFloat) g.ij[1][2]; fp[9] = (MyOutputFloat) g.ij[2][2];
                     fp[10] = (MyOutputFloat) CellP[pindex].gr.alpha;
                     fp[11] = (MyOutputFloat) CellP[pindex].gr.gdet;
                     fp += 12;
