@@ -692,7 +692,9 @@ integertime get_timestep(int p,		/*!< particle index */
                 /* velocity-change criterion: |a| dt <= GR_TIMESTEP_DV_FRAC * v_sig/2, with a = HydroAccel the coordinate dv/dt recovered in the GR kick and
                    v_sig/2 = csnd above: it limits the velocity jump per step in units of the local signal speed (the acceleration criterion's length scale,
                    the kernel radius, does not bind in strong shear layers: the relativistic rotor fails without this). At a discontinuity |a| ~ 1/Delta_x */
+#ifndef GR_TEST_PARTICLE /* (geodesic test particles have no signal speed) */
                 if(ac > MIN_REAL_NUMBER) {dt = DMIN(dt, GR_TIMESTEP_DV_FRAC*csnd/ac);}
+#endif
             }
 #endif
 

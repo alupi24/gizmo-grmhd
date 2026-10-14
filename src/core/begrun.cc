@@ -2317,7 +2317,6 @@ void read_parameter_file(char *fname)
 #endif
 
 
-#ifdef MAGNETIC
 #if defined(GENERAL_RELATIVITY) && (GR_METRIC==1)
       strcpy(tag[nt], "GR_Mass");
       addr[nt] = All.MetricParams;
@@ -2328,6 +2327,7 @@ void read_parameter_file(char *fname)
       id[nt++] = REAL;
 #endif
 
+#ifdef MAGNETIC
 #ifdef MHD_B_SET_IN_PARAMS
       strcpy(tag[nt], "BiniX");
       strcpy(alternate_tag[nt], "B_initial_x");
