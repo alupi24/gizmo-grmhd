@@ -301,22 +301,6 @@ void find_timesteps(void)
 
 
 
-
-/* length scale of the acceleration criterion dt = sqrt(2 eta L / |a|). Upstream uses the gas kernel radius whenever SELFGRAVITY_OFF is set
-   (ForceSoftening_KernelRadius). GR always sets SELFGRAVITY_OFF, and the GR(M)HD code of Fedrigo & Lupi (2025) used the fixed softening
-   (SofteningGas) here; the criterion applies in GR because HydroAccel holds the coordinate dv/dt recovered from dS/dt. With the kernel
-   radius it stops binding where the hydro accelerations are largest (strong shear layers, e.g. the edge of the relativistic rotor): the
-   time steps there become 2-4x longer than in the original code, and the rotor fails (the original code fails as well with that choice). */
-static inline double Timestep_Acceleration_Length(int p)
-{
-#if defined(GENERAL_RELATIVITY) && !defined(ADAPTIVE_GRAVSOFT_FORGAS) && !defined(ADAPTIVE_GRAVSOFT_FORALL)
-    return All.ForceSoftening[P[p].Type];
-#else
-    return ForceSoftening_KernelRadius(p);
-#endif
-}
-
-
 /*! This function normally (for flag==0) returns the maximum allowed timestep of a particle, expressed in
  *  terms of the integer mapping that is used to represent the total simulated timespan. The physical
  *  acceleration is returned in aphys. The latter is used in conjunction with the PSEUDOSYMMETRIC integration
@@ -425,11 +409,11 @@ integertime get_timestep(int p,		/*!< particle index */
     {
         /* this is the non-standard mode; use timestep to get the maximum acceleration tolerated */
         dt = flag * UNIT_INTEGERTIME_IN_PHYSICAL(p); /* convert dloga to physical timestep  */
-        ac = 2 * All.ErrTolIntAccuracy * All.cf_atime * KERNEL_CORE_SIZE * Timestep_Acceleration_Length(p) / (dt * dt);
+        ac = 2 * All.ErrTolIntAccuracy * All.cf_atime * KERNEL_CORE_SIZE * ForceSoftening_KernelRadius(p) / (dt * dt);
         *aphys = ac;
         return flag;
     }
-    dt = sqrt(2 * All.ErrTolIntAccuracy * All.cf_atime * KERNEL_CORE_SIZE * Timestep_Acceleration_Length(p) / ac);
+    dt = sqrt(2 * All.ErrTolIntAccuracy * All.cf_atime * KERNEL_CORE_SIZE * ForceSoftening_KernelRadius(p) / ac);
 
 #if (defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)) && defined(GALSF) && defined(GALSF_FB_MECHANICAL)
     if(((P[p].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[p].Type == 2)||(P[p].Type==3))))&&(P[p].Mass>0))
@@ -637,8 +621,9 @@ integertime get_timestep(int p,		/*!< particle index */
              }
              /* velocity-change criterion: |a| dt <= GR_TIMESTEP_DV_FRAC * v_sig/2, with a = HydroAccel the coordinate dv/dt recovered in the GR kick
                 (dS/dt -> dv/dt) and v_sig/2 = csnd above. It limits the velocity jump per step directly, in units of the local signal speed, rather
-                than the displacement error of the acceleration criterion (whose length scale is the gravitational softening); at a discontinuity
-                |a| ~ 1/Delta_x, so it scales with the resolution like the Courant condition */
+                than the displacement error of the acceleration criterion (whose length scale, the gas kernel radius when SELFGRAVITY_OFF as in GR,
+                does not bind in strong shear layers: the relativistic magnetic rotor fails without this limit). At a discontinuity |a| ~ 1/Delta_x,
+                so it scales with the resolution like the Courant condition */
              if(ac > MIN_REAL_NUMBER) {dt = DMIN(dt, GR_TIMESTEP_DV_FRAC*csnd/ac);}
             }
 #endif
