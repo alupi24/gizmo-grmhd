@@ -185,20 +185,22 @@ void hydro_core_meshless_compute_pair(
 #endif
 
 #ifdef GENERAL_RELATIVITY
+    const int recon_mode_pos = (recon_mode > 0) ? 3 : recon_mode; /* positive-definite scalars: bounded undershoot floor (reimann.h) */
     reconstruct_face_states(rho_i, local.Gradients.RestMassDensity, rho_j, CellP[j].Gradients.RestMassDensity,
-                            distance_from_i, distance_from_j, &Riemann_vec.L.rho, &Riemann_vec.R.rho, recon_mode);
+                            distance_from_i, distance_from_j, &Riemann_vec.L.rho, &Riemann_vec.R.rho, recon_mode_pos);
 #else
+    const int recon_mode_pos = recon_mode;
     reconstruct_face_states(rho_i, local.Gradients.Density, rho_j, CellP[j].Gradients.Density,
                             distance_from_i, distance_from_j, &Riemann_vec.L.rho, &Riemann_vec.R.rho, recon_mode);
 #endif
     reconstruct_face_states(P_i, local.Gradients.Pressure, P_j, CellP[j].Gradients.Pressure,
-                            distance_from_i, distance_from_j, &Riemann_vec.L.p, &Riemann_vec.R.p, recon_mode);
+                            distance_from_i, distance_from_j, &Riemann_vec.L.p, &Riemann_vec.R.p, recon_mode_pos);
 #ifdef EOS_GENERAL
     reconstruct_face_states(local.InternalEnergyPred, local.Gradients.InternalEnergy,
                             CellP[j].InternalEnergyPred, CellP[j].Gradients.InternalEnergy,
-                            distance_from_i, distance_from_j, &Riemann_vec.L.u, &Riemann_vec.R.u, recon_mode);
+                            distance_from_i, distance_from_j, &Riemann_vec.L.u, &Riemann_vec.R.u, recon_mode_pos);
     reconstruct_face_states(kernel.sound_i, local.Gradients.SoundSpeed, kernel.sound_j, CellP[j].Gradients.SoundSpeed,
-                            distance_from_i, distance_from_j, &Riemann_vec.L.cs, &Riemann_vec.R.cs, recon_mode);
+                            distance_from_i, distance_from_j, &Riemann_vec.L.cs, &Riemann_vec.R.cs, recon_mode_pos);
 #endif
     for(k=0; k<3; k++) {
 #ifdef GENERAL_RELATIVITY

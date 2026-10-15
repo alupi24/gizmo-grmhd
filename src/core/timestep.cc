@@ -676,7 +676,7 @@ integertime get_timestep(int p,		/*!< particle index */
 #ifdef MAGNETIC
                 tau += gr->gdet*(-0.5*b2 - ab0*ab0);
 #endif
-                dt = DMIN(dt, 0.1*tau/fabs(CellP[p].DtEnergy)*Vi);
+                if(fabs(CellP[p].DtEnergy) > 0 && tau > 0) {dt = DMIN(dt, 0.1*tau/fabs(CellP[p].DtEnergy)*Vi);} /* (a cell at rest with no energy flux has tau = 0 = DtEnergy) */
                 /* the same check on the conserved momentum S_j = D h* W v_j - sqrt(gamma) b^0 b_j: the change of |S| = sqrt(gamma^ij S_i S_j) per step is limited
                    to 10% of |S|. Near c this bounds the relative change of the Lorentz factor (dW/W ~ W^2 v.dv), which neither the Courant condition nor the
                    acceleration criterion controls; |S| is floored at 10% of the total energy tau+D, so that gas at rest is limited on the energy scale instead */

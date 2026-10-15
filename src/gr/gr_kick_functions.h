@@ -17,6 +17,78 @@
 #define GR_KICK_FUNCTIONS_H
 #ifdef GENERAL_RELATIVITY
 
+#ifdef GR_DRIFT_HOLD_INTERNAL_ENERGY
+/* Inversion with the energy slaved to the momentum: the conserved D, S_j (and sqrt(gamma) B^i) and the specific internal energy u are
+   held fixed, and the Lorentz factor, the rest-mass density, the pressure and tau are recomputed with the metric gr. It is used by the
+   drift (the metric changes along the path at fixed S_j and u), the kick removing the corresponding rate from the Valencia energy
+   source (gr_drift_tau_path_rate). Carrying tau through the drift unchanged leaves (D, S_j, tau) inconsistent with the new metric by
+   O(dt), which makes the velocity of the drifted state first-order accurate (circular geodesics in Kerr-Schild coordinates drift);
+   for a test particle the modified scheme is the Hamiltonian splitting in the covariant momentum, second order. Ideal gas: h = 1 + Gamma u does not depend on rho0,
+   so S_i S^i = (D h)^2 (W^2 - 1) gives W directly; with a field the rest-frame terms depend on v, so W is iterated.
+   On input prims->v is the velocity before the drift (initial guess); returns the Lorentz factor, or -1 if the iteration failed. */
+KOKKOS_INLINE_FUNCTION double gr_drift_reinvert(const struct gr_conservatives *cons, double u, double gamma_eos, const struct gr_metric *gr, int gr_limiter, struct gr_primitives *prims, struct gr_conservatives *cons_new)
+{
+    const double D = cons->D, h = 1. + gamma_eos*u, gdet = gr->gdet;
+    Vec3<double> v = prims->v;
+    double W = lorentz_factor(gr->gamma, v, gr_limiter);
+#ifdef MAGNETIC
+    Vec3<double> Bprim = cons->B/gdet;
+    double ab0, bsq; Vec3<double> b;
+    for(int it = 0; it < 50; it++)
+    {
+        Vec3<double> vtmp = v;
+        bsq = gr_bfield_restframe(gr, Bprim, vtmp, &ab0, &b, gr_limiter);
+        double rho0 = D/(gdet*W), hstar = h + bsq/rho0;
+        Vec3<double> v_cov = (cons->S + (gdet*ab0)*b)/(D*hstar*W);
+        Vec3<double> v_new = gr->ugamma.matvec(v_cov);
+        double W_new = lorentz_factor(gr->gamma, v_new, gr_limiter);
+        double err = (v_new - v).norm_sq();
+        v = v_new; W = W_new;
+        if(err < 1e-26) {break;}
+        if(it == 49) {return -1;}
+    }
+    {Vec3<double> vtmp = v; bsq = gr_bfield_restframe(gr, Bprim, vtmp, &ab0, &b, gr_limiter);}
+    prims->B = Bprim; prims->ab0 = ab0; prims->b = b; prims->bsq = bsq;
+#else
+    double S2 = gr->ugamma.quad(cons->S);
+    W = sqrt(1. + S2/(D*h*D*h));
+    v = gr->ugamma.matvec(cons->S)/(D*h*W);
+    lorentz_factor(gr->gamma, v, gr_limiter);
+#endif
+    prims->v = v;
+    prims->rho0 = D/(gdet*W);
+    prims->u = u;
+    prims->p = gr_pressure_rho0_u(prims->rho0, u);
+    gr_get_conservative_variables(prims, cons_new, W, gr);
+    return W;
+}
+
+/* rate of change of tau along the drift of cell i at fixed (D, S_j, sqrt(gamma) B^i, u), (d tau/d x^k) v^k with v the coordinate
+   velocity of the state (the particle is drifted with it): the Valencia energy source is the total rate along the path, of which this part is now
+   produced by the re-inversion of the drifted state, so it is removed from the source applied in the kick. Centred finite differences
+   of the slaved inversion along the direction of motion. */
+KOKKOS_INLINE_FUNCTION double gr_drift_tau_path_rate(int i, const struct gr_conservatives *cons, const struct gr_primitives *prims, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    /* chain rule in the coordinates: the drift displaces the particle by dt vc^k, so the rate is (d tau/d x^k) vc^k with vc^k = dx^k/dt
+       the coordinate velocity of the state; the finite-difference step is the coordinate displacement GR_EPS_TOLERANCE vc/|vc| (|vc| the
+       Euclidean norm, a parametrisation of the step that cancels out: no spatial metric is involved) */
+    const Vec3<double> vc = Vcoord(prims->v, &(cell[i].gr));
+    const double vnorm = vc.norm();
+    if(vnorm == 0) {return 0;}
+    const Vec3<double> dx = (GR_EPS_TOLERANCE/vnorm)*vc;
+    const double gamma_eos = cell[i].gamma_eos_value();
+    double tau_pm[2];
+    for(int k = 0; k < 2; k++)
+    {
+        struct gr_metric gr_k; struct gr_primitives prims_k = *prims; struct gr_conservatives cons_k;
+        set_metric_coefficients((k == 0) ? pp[i].Pos + dx : pp[i].Pos - dx, pp[i].Potential, &gr_k);
+        if(gr_drift_reinvert(cons, prims->u, gamma_eos, &gr_k, cell[i].gr.limiter, &prims_k, &cons_k) < 0) {return 0;}
+        tau_pm[k] = cons_k.tau;
+    }
+    return (tau_pm[0] - tau_pm[1])*(0.5*vnorm/GR_EPS_TOLERANCE); /* [f(x+dx) - f(x-dx)] / (2 |dx|) * |vc| */
+}
+#endif
+
 /* metric source terms of the momentum and energy equations at cell i, from the stress-energy tensor of the primitives
    (v may be limited in place where required): S_j: (alpha sqrt(gamma)/2) T^{mu nu} d_j g_{mu nu};
    tau: alpha sqrt(gamma) [T^{mu nu} K_ij-terms - (T^00 beta^j + T^0j) d_j alpha], with K_ij = -alpha Gamma^0_ij */
@@ -76,6 +148,9 @@ KOKKOS_INLINE_FUNCTION int gr_add_source_term(int i, struct gr_primitives *prims
     const struct gr_metric *gr = &(cell[i].gr);
     struct gr_conservatives Src;
     gr_source_term(i, prims, &Src, pp, cell);
+#ifdef GR_DRIFT_HOLD_INTERNAL_ENERGY
+    Src.tau -= gr_drift_tau_path_rate(i, cons, prims, pp, cell); /* the part of the energy source the drift accounts for */
+#endif
     /* predictor */
     cons->S += dtime*Src.S;
     cons->tau += dtime*Src.tau;
@@ -96,6 +171,9 @@ KOKKOS_INLINE_FUNCTION int gr_add_source_term(int i, struct gr_primitives *prims
             p_err = cons->S/cons->D;
             Src = Src_corr;
             gr_source_term(i, prims, &Src_corr, pp, cell);
+#ifdef GR_DRIFT_HOLD_INTERNAL_ENERGY
+            Src_corr.tau -= gr_drift_tau_path_rate(i, cons, prims, pp, cell);
+#endif
             cons->S += dtime*(Src_corr.S - Src.S);
             cons->tau += dtime*(Src_corr.tau - Src.tau);
             res_con2prim = gr_get_primitive_variables(cons, prims, gr, gr->limiter);
@@ -227,7 +305,11 @@ KOKKOS_INLINE_FUNCTION void gr_drift_impl(int i, double dt_drift, struct particl
 #endif
         Vec3<double> x_err = pp[i].Pos;
         set_metric_coefficients(pp[i].Pos, pp[i].Potential, &(cell[i].gr)); /* metric at the predicted location */
+#ifdef GR_DRIFT_HOLD_INTERNAL_ENERGY
+        {struct gr_conservatives Ctmp; res_con2prim = gr_drift_reinvert(&Cons, cell[i].InternalEnergy, cell[i].gamma_eos_value(), &(cell[i].gr), cell[i].gr.limiter, &Prims, &Ctmp);}
+#else
         res_con2prim = gr_get_primitive_variables(&Cons, &Prims, &(cell[i].gr), cell[i].gr.limiter);
+#endif
         if(res_con2prim < -1)
         {
             printf("GR: failed inversion (code %g) in the drift: ID %llu at %g %g %g\n", res_con2prim, (unsigned long long) pp[i].ID, pp[i].Pos[0], pp[i].Pos[1], pp[i].Pos[2]);
@@ -251,7 +333,11 @@ KOKKOS_INLINE_FUNCTION void gr_drift_impl(int i, double dt_drift, struct particl
 #endif
     /* metric at the new location, kicked primitives (corrector) */
     set_metric_coefficients(pp[i].Pos, pp[i].Potential, &(cell[i].gr));
+#ifdef GR_DRIFT_HOLD_INTERNAL_ENERGY
+    res_con2prim = gr_drift_reinvert(&Cons, cell[i].InternalEnergy, cell[i].gamma_eos_value(), &(cell[i].gr), cell[i].gr.limiter, &Prims, &Cons);
+#else
     res_con2prim = gr_get_primitive_variables(&Cons, &Prims, &(cell[i].gr), cell[i].gr.limiter);
+#endif
     if(res_con2prim < 0) {printf("GR: failed inversion (code %g) in the drift corrector: ID %llu\n", res_con2prim, (unsigned long long) pp[i].ID); endrun(9992407); return;}
     pp[i].Vel = Vcoord(Prims.v, &(cell[i].gr)); /* velocity consistent with the metric change */
 #ifdef MAGNETIC
@@ -266,7 +352,12 @@ KOKKOS_INLINE_FUNCTION void gr_drift_impl(int i, double dt_drift, struct particl
     }
 #endif
     /* predicted primitives */
+#ifdef GR_DRIFT_HOLD_INTERNAL_ENERGY
+    {Vec3<double> vguess = Vphys(cell[i].VelPred, &(cell[i].gr)); Prims.v = vguess;
+     res_con2prim = gr_drift_reinvert(&ConsPred, cell[i].InternalEnergyPred, cell[i].gamma_eos_value(), &(cell[i].gr), cell[i].gr.limiter, &Prims, &ConsPred);}
+#else
     res_con2prim = gr_get_primitive_variables(&ConsPred, &Prims, &(cell[i].gr), cell[i].gr.limiter);
+#endif
     if(res_con2prim < 0) {printf("GR: failed inversion (code %g) in the drift (predicted state): ID %llu\n", res_con2prim, (unsigned long long) pp[i].ID); endrun(9992408); return;}
     Vec3<double> vpred_new = Vcoord(Prims.v, &(cell[i].gr));
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && (HYDRO_FIX_MESH_MOTION>=5)

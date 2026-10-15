@@ -84,6 +84,13 @@ void local_slopelimiter(double *grad, double valmax, double valmin, double alim,
         f_corr_overshoot = DMIN(abs_min + shoot_tol * abs_max, abs_max);
         cfac *= f_corr_overshoot;
         if(pos_preserve == 1) {
+            /* positivity over a fraction SLOPELIMITER_POSITIVITY_RANGE_FAC (default 0.25) of the maximum neighbour distance d_max. With
+               the full d_max the midpoint rule fmin ~ (val+valmin)/2 halves the gradient of every smooth stratified profile: a TOV star or a
+               Newtonian polytrope then develops an inward density wave (outer layers drain, the core contracts). At 0.5 a linear profile is
+               just at the threshold and the drift is only slowed (n=1.5 polytrope: outer layer at 0.7 of Lane-Emden after 18 t_dyn); at
+               0.25 the step leaves smooth profiles alone and acts only near genuine positivity violations (the pairwise face limiter of
+               reconstruct_face_states, with the GR face floor GR_FACE_FLOOR_FAC, keeps the face states positive) */
+            d_max *= SLOPELIMITER_POSITIVITY_RANGE_FAC;
             double fmin = DMIN(val_cen, DMAX(0, DMAX(MIN_REAL_NUMBER * val_cen,
                                                     DMIN(0.5 * (val_cen + valmin),
                                                          val_cen - f_corr_overshoot))));
@@ -1005,12 +1012,19 @@ void hydro_gradient_calc(void)
             CellP[i].Density_Relative_Maximum_in_Kernel = passer_base[i].Maxima.Density;
 #endif
 #ifdef GENERAL_RELATIVITY
-            local_slopelimiter(CellP[i].Gradients.RestMassDensity, passer_base[i].Maxima.RestMassDensity, passer_base[i].Minima.RestMassDensity,
-                               a_limiter, h_lim, 0., 1, d_max, gr_get_primitive_density(CellP[i].Density, CellP[i].VelPred, &(CellP[i].gr), CellP[i].gr.limiter));
+#ifndef GR_LIMITER_POSITIVITY
+#define GR_LIMITER_POSITIVITY 1 /* 0 = no positivity-preserving step in the GR density/pressure limiters (test option) */
 #endif
+            local_slopelimiter(CellP[i].Gradients.RestMassDensity, passer_base[i].Maxima.RestMassDensity, passer_base[i].Minima.RestMassDensity,
+                               a_limiter, h_lim, 0., GR_LIMITER_POSITIVITY, d_max, gr_get_primitive_density(CellP[i].Density, CellP[i].VelPred, &(CellP[i].gr), CellP[i].gr.limiter));
+            local_slopelimiter(CellP[i].Gradients.Density, passer_base[i].Maxima.Density, passer_base[i].Minima.Density,
+                               a_limiter, h_lim, 0, GR_LIMITER_POSITIVITY, d_max, CellP[i].Density);
+            int pressure_is_positive_definite = GR_LIMITER_POSITIVITY;
+#else
             local_slopelimiter(CellP[i].Gradients.Density, passer_base[i].Maxima.Density, passer_base[i].Minima.Density,
                                a_limiter, h_lim, 0, 1, d_max, CellP[i].Density);
             int pressure_is_positive_definite = 1;
+#endif
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
             pressure_is_positive_definite = 0;
 #endif

@@ -103,14 +103,17 @@
 # ------------------------------- users of these routines should cite Lupi 2023, MNRAS, 519, 1115 (GR hydro) and Fedrigo & Lupi 2025, A&A, 700, A112 (GR MHD)
 ####################################################################################################
 #GENERAL_RELATIVITY=0           # turns on general relativistic hydrodynamics; 0=HLL solver/1=GFORCE solver. Does not work with SPH; forces SELFGRAVITY_OFF. Needs PREVENT_PARTICLE_MERGE_SPLIT (merge/split not ported yet)
-#GR_METRIC=1                    # metric: 0=Minkowski, 1=Kerr (default; GR_Mass/GR_Spin in the parameterfile, in code units G=c=1). (2=superposed binary black holes and <0=tabulated metric are not ported to this branch yet)
+#GR_METRIC=1                    # metric: 0=Minkowski, 1=Kerr (default; GR_Mass/GR_Spin in the parameterfile, in code units G=c=1), <0=tabulated static spherically symmetric metric (TOV: GR_MetricTableFile in the parameterfile, header "# N log" then rows "r M(r) -g_tt r_iso"). (2=superposed binary black holes is not ported to this branch yet)
+#USE_ISOTROPIC_RADIUS           # GR_METRIC<0: the table is indexed by the isotropic radius (conformally flat spatial metric) instead of the areal radius
 #USE_BOYERLINDQUIST             # force Boyer-Lindquist coordinates for GR_METRIC=1 (otherwise Kerr-Schild coordinates, which are regular at the horizon)
 #GR_EXCISION_RADIUS=2.1         # cells inside this radius (in units of the horizon radius) are removed from the simulation, to avoid the divergence at the black hole (default 2.1)
 #DIVBCLEANING_GR                # divergence cleaning in GR (always on with GENERAL_RELATIVITY+MAGNETIC); cleaning speed c_h, damping K and boost f are set in gr/gr.h (see gr/ROUTE_B_cleaning_notes.pdf)
 #GR_CLEANING_LEGACY             # regression mode: reproduces the pre-Route-B cleaning (c_h=1 states, damping K*alpha*v_sig/(2 dx), old signal-velocity boost) with the same binary; HLL/GForce only
 #GR_ENTROPY_SWITCH              # compute the internal energy density from the conserved entropy function P/rho^Gamma where P_mag > P_th
-#GR_TIMESTEP_DV_FRAC=0.01       # GR time step: |dv/dt| dt <= GR_TIMESTEP_DV_FRAC * (signal speed), default 0.01
+#GR_TIMESTEP_DV_FRAC=0.03       # GR time step: |dv/dt| dt <= GR_TIMESTEP_DV_FRAC * (signal speed), default 0.03 (the relativistic rotor runs without it; it binds only below ~0.03)
 #GR_TEST_PARTICLE               # forces the gas to behave like collisionless particles (tests of the source terms)
+#SLOPELIMITER_POSITIVITY_RANGE_FAC=0.25 # positivity-preserving slope limiter (all hydro): positivity is enforced over this fraction of the maximum neighbour distance (default 0.25); 1.0 restores the old over-limiting behaviour that excites an inward density wave in polytropes/TOV stars, 0.5 only slows it
+#GR_DRIFT_HOLD_INTERNAL_ENERGY  # the drift holds D, S_j, sqrt(gamma)B^i and the specific internal energy fixed while the metric changes along the path, and recomputes W and tau at the new metric (second-order geodesics in Kerr-Schild coordinates; default off = the scheme of Lupi 2023, which carries tau through the drift)
 ####################################################################################################
 
 # -------------------------------------- Conduction

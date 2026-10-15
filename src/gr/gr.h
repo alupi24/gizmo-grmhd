@@ -22,11 +22,14 @@
 #define GR_EPS_TOLERANCE (1e-8) /* finite-difference step of the metric derivatives */
 
 #define PARTICLE (25487837)           /* ID of one particle for which the GR solver prints diagnostics (debug) */
+#ifndef GR_FACE_FLOOR_FAC
+#define GR_FACE_FLOOR_FAC (0.5)       /* pairwise reconstruction of rho0, P (u, c_s): the face value is never below this fraction of the smaller cell value (reimann.h, mode 3) */
+#endif
 #define GR_GAMMA_LIMITER (1000)       /* maximum Lorentz factor enforced inside GAMMA_LIMITER_RADIUS */
 #define GAMMA_LIMITER_RADIUS (0.0)    /* radius (from the origin, or from the nearest sink for the binary metric) inside which the Lorentz factor is limited */
 #define ZETA_CLEANING (1.0)
 #ifndef GR_TIMESTEP_DV_FRAC
-#define GR_TIMESTEP_DV_FRAC (0.01)    /* time step: the change of the coordinate velocity per step, |a| dt, is limited to this fraction of the local signal speed (core/timestep.cc) */
+#define GR_TIMESTEP_DV_FRAC (0.03)    /* time step: the change of the coordinate velocity per step, |a| dt, is limited to this fraction of the local signal speed (core/timestep.cc) */
 #endif
 
 #ifdef DIVBCLEANING_GR
@@ -104,6 +107,9 @@ struct kernel_NR
 #endif
 
 /* --- host routines (gr/gr_utils.cc) --- */
+#if (GR_METRIC<0)
+void gr_load_metric_table(void); /* reads All.GR_MetricTableFile into All.GR_MetricTable (begrun) */
+#endif
 #ifdef PARTICLE_EXCISION
 /* apply_excision() (gravity/analytic_gravity.h, called once per step) uses check_boundary() to remove the cells inside GR_EXCISION_RADIUS horizon radii */
 void check_boundary(int target);

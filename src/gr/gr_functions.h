@@ -17,8 +17,8 @@
 #define GR_GR_FUNCTIONS_H
 #ifdef GENERAL_RELATIVITY
 
-#if (GR_METRIC==2) || (GR_METRIC<0)
-#error "GR_METRIC=2 (superposed binary) and GR_METRIC<0 (tabulated metric) are not ported to the Kokkos code yet: use GR_METRIC=0 (flat) or 1 (Kerr)"
+#if (GR_METRIC==2)
+#error "GR_METRIC=2 (superposed binary) is not ported to the Kokkos code yet: use GR_METRIC=0 (flat), 1 (Kerr) or <0 (tabulated)"
 #endif
 
 /* ------------------------------------------------------------------ kinematics */
@@ -86,6 +86,39 @@ KOKKOS_INLINE_FUNCTION void get_covariant_metric(const Vec3<double> &pos, struct
     g->ti = Mfac*l;
     g->ij = Mfac*outer_product(l);
     g->ij[0][0] += 1; g->ij[1][1] += 1; g->ij[2][2] += 1;
+#endif
+#elif (GR_METRIC<0) /* tabulated static spherically symmetric metric (All.GR_MetricTable: r, M(r), -g_tt, r_iso; see gr_load_metric_table) */
+    const int N = All.GR_MetricTableN;
+    const double *rb = All.GR_MetricTable, *mass = rb + N, *gtt = rb + 2*N;
+    double r = dp.norm(); int ir;
+#ifdef USE_ISOTROPIC_RADIUS /* isotropic coordinates: the table is indexed by r_iso, the spatial metric is conformally flat, e^{4 phi} = (r_areal/r_iso)^2 */
+    const double *riso = rb + 3*N;
+    if(r <= riso[0]) {r = riso[0];}
+    if(All.GR_MetricTableLog) {ir = (int)(log10(r/riso[0])/log10(riso[N-1]/riso[0])*(N-1));}
+    else {int il = 0, ih = N-1; while(ih > il+1) {ir = (il+ih)/2; if(riso[ir] > r) {ih = ir;} else {il = ir;}} ir = il;}
+    if(ir < 0) {ir = 0;} if(ir > N-1) {ir = N-1;}
+    double e4phi, g00;
+    if(ir < N-1) {double f = (r - riso[ir])/(riso[ir+1] - riso[ir]); e4phi = rb[ir] + f*(rb[ir+1] - rb[ir]); g00 = -(gtt[ir] + f*(gtt[ir+1] - gtt[ir]));}
+    else {e4phi = fmax(rb[N-2] + (rb[N-1] - rb[N-2])/(riso[N-1] - riso[N-2])*(r - riso[N-2]), 1.0); g00 = -(1 - 2*mass[N-1]/r);}
+    e4phi = e4phi*e4phi/(r*r);
+    g->tt = g00; g->ti = Vec3<double>{0,0,0}; g->ij.set_isotropic(e4phi);
+#else /* areal (Schwarzschild-like) radius: g_rr = 1/(1 - 2M(r)/r), gamma_ij = delta_ij + (g_rr - 1) x_i x_j/r^2 */
+    if(r <= rb[1]) {r = rb[1];} /* the first row is r = 0, where M/r^3 of the linear interpolation is singular: floor at the first positive radius */
+    if(All.GR_MetricTableLog) {ir = (r < rb[0]) ? 0 : (int)(log10(r/rb[0])/log10(rb[N-1]/rb[0])*(N-1));}
+    else {ir = (int)(r*(N-1)/rb[N-1]);}
+    if(ir < 0) {ir = 0;} if(ir > N-1) {ir = N-1;}
+    double Mr, g00;
+    if(ir < N-1) {double f = (r - rb[ir])/(rb[ir+1] - rb[ir]); Mr = mass[ir] + f*(mass[ir+1] - mass[ir]); g00 = -(gtt[ir] + f*(gtt[ir+1] - gtt[ir]));}
+    else {Mr = mass[N-1]; g00 = -(1 - 2*mass[N-1]/r);}
+    double grr = 1./(1 - 2*Mr/r), omega = 2*Mr/(r*r*r);
+    Vec3<double> dp2 = {dp[0]*dp[0], dp[1]*dp[1], dp[2]*dp[2]};
+    g->tt = g00; g->ti = Vec3<double>{0,0,0};
+    g->ij[0][0] = grr*(1 - omega*(dp2[1] + dp2[2]));
+    g->ij[1][1] = grr*(1 - omega*(dp2[0] + dp2[2]));
+    g->ij[2][2] = grr*(1 - omega*(dp2[0] + dp2[1]));
+    g->ij[0][1] = grr*dp[0]*dp[1]*omega;
+    g->ij[0][2] = grr*dp[0]*dp[2]*omega;
+    g->ij[1][2] = grr*dp[1]*dp[2]*omega;
 #endif
 #endif
 }

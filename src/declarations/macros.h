@@ -287,3 +287,7 @@ void        gizmo_request_controlled_stop(int code, const char *reason,
 
 #define MACRO_NAME_CONCATENATE(A, B) MACRO_NAME_CONCATENATE_(A, B)
 #define MACRO_NAME_CONCATENATE_(A, B) A##B
+
+#ifndef SLOPELIMITER_POSITIVITY_RANGE_FAC
+#define SLOPELIMITER_POSITIVITY_RANGE_FAC (0.25) /* positivity-preserving slope limiter: fraction of the maximum neighbour distance over which positivity is enforced (local_slopelimiter) */
+#endif

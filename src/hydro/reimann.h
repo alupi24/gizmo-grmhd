@@ -156,7 +156,7 @@ static GIZMO_GPU_FUNCTION void reconstruct_face_states(double Q_i, MyFloat Grad_
 #ifdef MAGNETIC
     double fac_minmax;
     double fac_meddev;
-    if(mode == 1)
+    if(mode == 1 || mode == 3)
     {
         fac_minmax = 0.5; //0.375; /* 0.5, 0.1 works; 1.0 unstable; 0.75 is stable but begins to 'creep' */
         fac_meddev = 0.375; //0.25; /* 0.25,0.375 work well; 0.5 unstable; 0.44 is on-edge */
@@ -207,6 +207,14 @@ static GIZMO_GPU_FUNCTION void reconstruct_face_states(double Q_i, MyFloat Grad_
         if(Qmax<0) {if(Qmax_eff>0) Qmax_eff=Qmax*Qmax/(Qmax-(Qmax_eff-Qmax));} // works with 0.5,0.1 //
         if(Qmin>0) {if(Qmin_eff<0) Qmin_eff=Qmin*Qmin/(Qmin+(Qmin-Qmin_eff));}
     }
+#ifdef GENERAL_RELATIVITY
+    /* mode 3 (GR, positive-definite scalars: rest-mass density, pressure, u, sound speed; otherwise as mode 1): the logarithmic floor
+       above tends to zero for a strongly undershooting extrapolation, and a face state with P or rho -> 0 next to a fast magnetised cell
+       is a hard case for the relativistic Riemann problem. Safety net: the face value is never below GR_FACE_FLOOR_FAC of the smaller
+       cell value. It acts pairwise, without limiting the cell gradients; it did not bind in the tested problems (relativistic magnetic
+       rotor, TOV, Bondi), which run with and without it. */
+    if(mode == 3 && Qmin > 0 && Qmin_eff < GR_FACE_FLOOR_FAC*Qmin) {Qmin_eff = GR_FACE_FLOOR_FAC*Qmin;}
+#endif
     /* also allow tolerance to over/undershoot the exact midpoint value in the reconstruction */
     fac = fac_meddev * (Qmax-Qmin);
     if(mode == -1) {fac += MHD_CONSTRAINED_GRADIENT_FAC_MED_PM * fabs(Qmed);}

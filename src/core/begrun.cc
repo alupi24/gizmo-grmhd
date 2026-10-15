@@ -150,6 +150,9 @@ void begrun(void)
   set_units();
   set_cosmo_factors_for_current_time();
   All.Time = All.TimeBegin;
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC<0)
+  gr_load_metric_table(); /* the tabulated metric into shared memory (the pointer travels with the All mirror) */
+#endif
 
   gizmo_gpu_sync_all();  /* sync All to GPU managed copies before any EOS/cooling calls */
 
@@ -2325,6 +2328,11 @@ void read_parameter_file(char *fname)
       strcpy(tag[nt], "GR_Spin");
       addr[nt] = All.MetricParams+1;
       id[nt++] = REAL;
+#endif
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC<0)
+      strcpy(tag[nt], "GR_MetricTableFile");
+      addr[nt] = All.GR_MetricTableFile;
+      id[nt++] = STRING;
 #endif
 
 #ifdef MAGNETIC
