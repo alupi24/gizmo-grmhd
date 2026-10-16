@@ -1,3 +1,5 @@
+Notes for the GR version: still a partial port, not tested yet. Do not use it for production runs
+
 Welcome!
 
 This is **GIZMO**: a flexible, multi-method, multi-physics, performance-portable code. The Kokkos code branches are fully GPU-enabled through Kokkos and have been tested on a wide range of different CPU-GPU architectures and hardware. It solves the fluid using your choice of methods (e.g. Lagrangian mesh-free finite-volume Godunov methods, or fixed-grid Eulerian methods, or SPH), and self-gravity with fast hybrid PM-Tree or Hermite or direct methods and fully-adaptive resolution. Other physics include: magnetic fields (ideal and non-ideal), radiation/neutrino-hydrodynamics, anisotropic conduction and viscosity, particle-in-cell, solid/elastic/material dynamics, Reynolds tensor models, non-equilibrium thermochemistry, cosmological integration, nuclear burning, sink particles, particulate-fluid mixtures, cosmic rays and relativistic species, degenerate equations of state, galaxy/star/black hole formation and feedback, a wide variety of particle dark matter models, on-the-fly structure finding, and many more. 
