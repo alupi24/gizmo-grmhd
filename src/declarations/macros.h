@@ -291,3 +291,6 @@ void        gizmo_request_controlled_stop(int code, const char *reason,
 #ifndef SLOPELIMITER_POSITIVITY_RANGE_FAC
 #define SLOPELIMITER_POSITIVITY_RANGE_FAC (0.25) /* positivity-preserving slope limiter: fraction of the maximum neighbour distance over which positivity is enforced (local_slopelimiter) */
 #endif
+#ifndef SLOPELIMITER_POSITIVITY_RANGE_FAC_DENSITY
+#define SLOPELIMITER_POSITIVITY_RANGE_FAC_DENSITY (0.5) /* the same for the GR density limiters (rest-mass and conserved density, pos_preserve == 2); Newtonian runs use SLOPELIMITER_POSITIVITY_RANGE_FAC for every quantity */
+#endif

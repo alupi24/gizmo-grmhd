@@ -28,16 +28,15 @@
 #define GR_GAMMA_LIMITER (1000)       /* maximum Lorentz factor enforced inside GAMMA_LIMITER_RADIUS */
 #define GAMMA_LIMITER_RADIUS (0.0)    /* radius (from the origin, or from the nearest sink for the binary metric) inside which the Lorentz factor is limited */
 #define ZETA_CLEANING (1.0)
-#ifndef GR_TIMESTEP_DV_FRAC
-#define GR_TIMESTEP_DV_FRAC (0.03)    /* time step: the change of the coordinate velocity per step, |a| dt, is limited to this fraction of the local signal speed (core/timestep.cc) */
-#endif
 
 #ifdef DIVBCLEANING_GR
 /* Divergence cleaning with a genuine cleaning speed c_h ("Route B", see gr/ROUTE_B_cleaning_notes.pdf):
    c_h = v_ms (1+f)/(1+f v_ms^2) from the local magnetosonic speed (Fedrigo & Lupi 2025), capped at the speed of light;
    each particle uses its local value (CellP.CleaningSpeed), faces use the maximum over the pair.
    KAPPA_CLEANING is the dimensionless damping constant K: damping rate = alpha*K*c_h/Delta_x. */
+#ifndef KAPPA_CLEANING
 #define KAPPA_CLEANING (0.1)  /* K of Fedrigo & Lupi (2025); the pre-Route-B scheme (GR_CLEANING_LEGACY) uses the same K with MaxSignalVel/2 in place of c_h */
+#endif
 #define SIGMAH (1.0)          /* multiplier of the hyperbolic source -alpha*c_h*D*divB */
 #define VEL_CLEANING (1.0)    /* f: relativistic boost of the magnetosonic speed */
 #ifdef GR_CLEANING_LEGACY

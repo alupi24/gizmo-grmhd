@@ -110,9 +110,10 @@
 #DIVBCLEANING_GR                # divergence cleaning in GR (always on with GENERAL_RELATIVITY+MAGNETIC); cleaning speed c_h, damping K and boost f are set in gr/gr.h (see gr/ROUTE_B_cleaning_notes.pdf)
 #GR_CLEANING_LEGACY             # regression mode: reproduces the pre-Route-B cleaning (c_h=1 states, damping K*alpha*v_sig/(2 dx), old signal-velocity boost) with the same binary; HLL/GForce only
 #GR_ENTROPY_SWITCH              # compute the internal energy density from the conserved entropy function P/rho^Gamma where P_mag > P_th
-#GR_TIMESTEP_DV_FRAC=0.03       # GR time step: |dv/dt| dt <= GR_TIMESTEP_DV_FRAC * (signal speed), default 0.03 (the relativistic rotor runs without it; it binds only below ~0.03)
+#KAPPA_CLEANING=0.1            # GR divergence cleaning: dimensionless damping constant K (damping rate alpha*K*c_h/Delta_x), default 0.1 as in Fedrigo & Lupi (2025)
 #GR_TEST_PARTICLE               # forces the gas to behave like collisionless particles (tests of the source terms)
 #SLOPELIMITER_POSITIVITY_RANGE_FAC=0.25 # positivity-preserving slope limiter (all hydro): positivity is enforced over this fraction of the maximum neighbour distance (default 0.25); 1.0 restores the old over-limiting behaviour that excites an inward density wave in polytropes/TOV stars, 0.5 only slows it
+#SLOPELIMITER_POSITIVITY_RANGE_FAC_DENSITY=0.5 # the same for the GR density limiters only (default 0.5; at 0.25 the relativistic magnetic rotor loses its gas pressure where its waves meet across the periodic boundaries, while TOV stars are unaffected); Newtonian runs use SLOPELIMITER_POSITIVITY_RANGE_FAC for every quantity
 #GR_DRIFT_HOLD_INTERNAL_ENERGY  # the drift holds D, S_j, sqrt(gamma)B^i and the specific internal energy fixed while the metric changes along the path, and recomputes W and tau at the new metric (second-order geodesics in Kerr-Schild coordinates; default off = the scheme of Lupi 2023, which carries tau through the drift)
 ####################################################################################################
 
