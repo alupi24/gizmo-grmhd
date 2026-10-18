@@ -90,8 +90,8 @@ void local_slopelimiter(double *grad, double valmax, double valmin, double alim,
                step over-limits smooth stratified profiles: a TOV star or a Newtonian polytrope then develops an inward density wave
                (outer layers drain, the core contracts); at 0.5 the wave is only slowed (TOV: outer shell at 0.7 of its initial density
                after t=20), at 0.25 smooth profiles are left alone. The GR densities need 0.5, where faces lie at the farthest
-               neighbour's midpoint: at 0.25 the gas pressure of the relativistic magnetic rotor collapses where its waves meet across the
-               periodic boundaries, while the TOV profile is unchanged by the density factor. The pairwise face limiter of
+               neighbour's midpoint: at 0.25 the gas pressure of the relativistic magnetic rotor collapses in its dense, magnetically
+               dominated shell (t~0.22), while the TOV profile is unchanged by the density factor. The pairwise face limiter of
                reconstruct_face_states, with the GR face floor GR_FACE_FLOOR_FAC, keeps the face states positive. */
             d_max *= (pos_preserve == 2) ? SLOPELIMITER_POSITIVITY_RANGE_FAC_DENSITY : SLOPELIMITER_POSITIVITY_RANGE_FAC;
             double fmin = DMIN(val_cen, DMAX(0, DMAX(MIN_REAL_NUMBER * val_cen,

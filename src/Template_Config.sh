@@ -113,7 +113,7 @@
 #KAPPA_CLEANING=0.1            # GR divergence cleaning: dimensionless damping constant K (damping rate alpha*K*c_h/Delta_x), default 0.1 as in Fedrigo & Lupi (2025)
 #GR_TEST_PARTICLE               # forces the gas to behave like collisionless particles (tests of the source terms)
 #SLOPELIMITER_POSITIVITY_RANGE_FAC=0.25 # positivity-preserving slope limiter (all hydro): positivity is enforced over this fraction of the maximum neighbour distance (default 0.25); 1.0 restores the old over-limiting behaviour that excites an inward density wave in polytropes/TOV stars, 0.5 only slows it
-#SLOPELIMITER_POSITIVITY_RANGE_FAC_DENSITY=0.5 # the same for the GR density limiters only (default 0.5; at 0.25 the relativistic magnetic rotor loses its gas pressure where its waves meet across the periodic boundaries, while TOV stars are unaffected); Newtonian runs use SLOPELIMITER_POSITIVITY_RANGE_FAC for every quantity
+#SLOPELIMITER_POSITIVITY_RANGE_FAC_DENSITY=0.5 # the same for the GR density limiters only (default 0.5; at 0.25 the relativistic magnetic rotor loses its gas pressure in its dense, magnetically dominated shell, while TOV stars are unaffected); Newtonian runs use SLOPELIMITER_POSITIVITY_RANGE_FAC for every quantity
 #GR_DRIFT_HOLD_INTERNAL_ENERGY  # the drift holds D, S_j, sqrt(gamma)B^i and the specific internal energy fixed while the metric changes along the path, and recomputes W and tau at the new metric (second-order geodesics in Kerr-Schild coordinates; default off = the scheme of Lupi 2023, which carries tau through the drift)
 ####################################################################################################
 
