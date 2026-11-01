@@ -150,6 +150,9 @@ void begrun(void)
   set_units();
   set_cosmo_factors_for_current_time();
   All.Time = All.TimeBegin;
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC<0)
+  gr_load_metric_table(); /* the tabulated metric into shared memory (the pointer travels with the All mirror) */
+#endif
 
   gizmo_gpu_sync_all();  /* sync All to GPU managed copies before any EOS/cooling calls */
 
@@ -293,6 +296,9 @@ void begrun(void)
 				   Note:  All.PartAllocFactor is treated in restart() separately.
 				 */
 
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC<0)
+      All.GR_MetricTable = all.GR_MetricTable; /* the restart file holds the address of the previous run's table: keep the one loaded above */
+#endif
       All.MinSizeTimestep = all.MinSizeTimestep;
       All.MaxSizeTimestep = all.MaxSizeTimestep;
       All.CommChunkSize = all.CommChunkSize;
@@ -433,6 +439,8 @@ void begrun(void)
 #if defined(MAGNETIC) && defined(DIVBCLEANING_DEDNER)
         All.DivBcleanParabolicSigma = all.DivBcleanParabolicSigma;
         All.DivBcleanHyperbolicSigma = all.DivBcleanHyperbolicSigma;
+#endif
+#if defined(MAGNETIC) && defined(DIVBCLEANING_DEDNER)
         All.FastestWaveSpeed = 0.0;
         All.FastestWaveDecay = 0.0;
 #endif
@@ -598,8 +606,13 @@ void begrun(void)
     int i;
     for(i = 0; i < NumPart; i++)
     {
+#ifdef GENERAL_RELATIVITY
+      P[i].Pos[2] = P[i].GravAccel[2] = 0; /* GR: the z-velocity is kept (as in the original GR code) */
+      if(P[i].Type == 0) {CellP[i].HydroAccel[2] = 0;}
+#else
       P[i].Pos[2] = P[i].Vel[2] = P[i].GravAccel[2] = 0;
       if(P[i].Type == 0) {CellP[i].VelPred[2] = CellP[i].HydroAccel[2] = 0;}
+#endif
     }
 #endif
 #endif
@@ -2310,6 +2323,21 @@ void read_parameter_file(char *fname)
 #endif
 
 
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC==1)
+      strcpy(tag[nt], "GR_Mass");
+      addr[nt] = All.MetricParams;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "GR_Spin");
+      addr[nt] = All.MetricParams+1;
+      id[nt++] = REAL;
+#endif
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC<0)
+      strcpy(tag[nt], "GR_MetricTableFile");
+      addr[nt] = All.GR_MetricTableFile;
+      id[nt++] = STRING;
+#endif
+
 #ifdef MAGNETIC
 #ifdef MHD_B_SET_IN_PARAMS
       strcpy(tag[nt], "BiniX");
@@ -3148,6 +3176,10 @@ void read_parameter_file(char *fname)
 
     All.CourantFac = 0.4;
     All.ErrTolIntAccuracy = 0.02;
+#ifdef GENERAL_RELATIVITY
+    All.CourantFac = 0.2;
+    All.ErrTolIntAccuracy = 0.01;
+#endif
     All.ErrTolTheta = 0.7;
     All.ErrTolForceAcc = 0.0025;
     All.MaxRMSDisplacementFac = 0.25;
@@ -3231,7 +3263,7 @@ void read_parameter_file(char *fname)
     if(All.MaxNumNgbDeviation > 0.05) {All.MaxNumNgbDeviation = 0.05;}
 #endif
     
-#if defined(MAGNETIC) || defined(HYDRO_MESHLESS_FINITE_VOLUME) || defined(SINK_WIND_SPAWN)
+#if defined(MAGNETIC) || defined(HYDRO_MESHLESS_FINITE_VOLUME) || defined(SINK_WIND_SPAWN) || defined(GENERAL_RELATIVITY)
     if(All.CourantFac > 0.2) {All.CourantFac = 0.2;}
     /* (PFH) safety factor needed for MHD calc, because people keep using the same CFac as hydro! */
 #endif

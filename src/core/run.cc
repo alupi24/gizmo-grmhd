@@ -140,7 +140,12 @@ void run(void)
 
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
 
+#ifndef GR_TEST_PARTICLE
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
+#endif
+#ifdef GENERAL_RELATIVITY
+        compute_initial_accelerations(); /* GR: seed HydroAccel/DtInternalEnergy from the initial fluxes (a first kick over a nominal step) */
+#endif
 
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion */
     }
@@ -448,7 +453,9 @@ void run(void)
         CPU_Step[CPU_SNIIHEATING] += measure_time();
 #endif
 
+#ifndef GR_TEST_PARTICLE /* GR geodesic test particles: no hydro */
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
+#endif
 #ifdef DM_HEATING
         apply_dm_heating();  /* add continuous DM annihilation+decay heating into DtInternalEnergy (after hydro zeros it, before transport/cooling consumes it) */
         CPU_Step[CPU_COOLINGSFR] += measure_time();
@@ -554,6 +561,7 @@ void set_non_standard_physics_for_current_time(void)
 #if defined(GALSF_SFR_IMF_SAMPLING_DISTRIBUTE_SF)
     update_stellarnumber_and_timedistribofstarformation();
 #endif
+
 }
 
 
@@ -730,6 +738,10 @@ void calculate_non_standard_physics(void)
 #if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING)
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
+#endif
+#if defined(GENERAL_RELATIVITY) && defined(GR_BETACOOLING)
+    implicit_cooling(); // GR beta cooling of a disc around the black hole(s) (gr/gr_utils.cc) //
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
 #ifdef DISK_BETA_COOL
     disk_betacool_parent_routine(); // simple beta-cooling for disk problems (mutually exclusive with COOLING) //

@@ -30,6 +30,9 @@
 #include "../mesh/ghost_writeback.h"
 #include "../gravity/gpu_pseudo_update.h" /* gpu_set_soa_nextnode / gpu_set_soa_sibling: keep SoA node thread coherent with the rearrange pointer fixups */
 #include "../gravity/forcetree.h"         /* force_tree_swap_attachment_slots: the standing tree's attachment record */
+#ifdef GENERAL_RELATIVITY
+#include "../gr/gr_kick_functions.h" /* gr_primitives_of_cell (the GR merge works on the conserved variables) */
+#endif
 
 /*! This file contains the operations needed for merging/splitting gas particles/cells on-the-fly in the simulations.
     If more complicated routines, etc. are to be added to determine when (and how) splitting/merging occurs, they should also be
@@ -857,6 +860,11 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
         CellP[j].MassTrue = mass_of_new_particle * CellP[i].MassTrue;
         CellP[i].MassTrue -= CellP[j].MassTrue;
 #endif
+#ifdef GENERAL_RELATIVITY
+        /* the rates of the conserved variables are extensive: partition them as the mass */
+        CellP[j].DtMomentum = CellP[i].DtMomentum * mass_of_new_particle; CellP[i].DtMomentum -= CellP[j].DtMomentum;
+        CellP[j].DtEnergy = mass_of_new_particle * CellP[i].DtEnergy; CellP[i].DtEnergy -= CellP[j].DtEnergy;
+#endif
 #ifdef COSMIC_RAY_FLUID
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)
         CellP[j].DtCREgyNewInjectionFromShocks = mass_of_new_particle * CellP[i].DtCREgyNewInjectionFromShocks; CellP[i].DtCREgyNewInjectionFromShocks -= CellP[j].DtCREgyNewInjectionFromShocks;
@@ -945,6 +953,9 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
      any other operations on the particles */
     P[i].Pos[0] += dx; P[j].Pos[0] -= dx; P[i].Pos[1] += dy; P[j].Pos[1] -= dy; P[i].Pos[2] += dz; P[j].Pos[2] -= dz;
     gizmo_mark_position_dirty_indices(&i, 1);   /* the parent moved in place; the daughter is not in the tree until its next build */
+#ifdef GENERAL_RELATIVITY
+    if(P[i].Type == 0) {set_metric_coefficients(P[i].Pos, P[i].Potential, &(CellP[i].gr)); set_metric_coefficients(P[j].Pos, P[j].Potential, &(CellP[j].gr));}
+#endif
 
     /* note: neither particle's TimestepDilationFactor is touched here. Splitting happens between the
        two half-kicks of a step, and the daughter inherits the parent's timebin and Ti_begstep rather
@@ -1066,6 +1077,39 @@ int merge_particles_ij(int i, int j)
     {
         P[j].wakeup = -1; wakeup_sidecar_mark(j); NeedToWakeupParticles_local = 1;
     }
+#ifdef GENERAL_RELATIVITY
+    /* GR (as in the C/C++ GIZMO branches): the rates of the conserved variables add; the merged conserved variables (predicted and
+       kicked states) are the volume-weighted sums divided by max(V_i, V_j): the merged cell is not a new cell of volume V_i + V_j, but
+       the volume enclosing the neighbours of the survivor (slightly larger, the number of cells having decreased by one). They are
+       inverted below with the metric at the merged position. The entropy proxy log(u) + (1-Gamma) log(rho0) of the merged state may not
+       exceed that of the two parents (no artificial heating). */
+    CellP[j].DtMomentum += CellP[i].DtMomentum; CellP[i].DtMomentum = {};
+    CellP[j].DtEnergy += CellP[i].DtEnergy; CellP[i].DtEnergy = 0;
+    struct gr_conservatives gr_cons_i, gr_cons_j, gr_cons_j_pred;
+    double gr_Si_check, gr_Sj_check, gr_ui_tmp, gr_uj_tmp;
+    double gr_Vi = P[i].Mass/CellP[i].Density, gr_Vj = P[j].Mass/CellP[j].Density, gr_Vtot = DMAX(gr_Vi, gr_Vj);
+    {
+        struct gr_primitives pr; double W; Vec3<double> BVi = {0,0,0}, BVj = {0,0,0}, BVPi = {0,0,0}, BVPj = {0,0,0};
+        /* predicted states */
+        W = gr_primitives_of_cell(i, CellP[i].VelPred, P[i].Mass, gr_Vi, CellP[i].InternalEnergyPred, BVPi, &pr, P, CellP);
+        gr_get_conservative_variables(&pr, &gr_cons_i, W, &(CellP[i].gr));
+        gr_Si_check = log(pr.u) + (1.0 - GAMMA_DEFAULT)*log(pr.rho0); gr_ui_tmp = pr.u;
+        W = gr_primitives_of_cell(j, CellP[j].VelPred, P[j].Mass, gr_Vj, CellP[j].InternalEnergyPred, BVPj, &pr, P, CellP);
+        gr_get_conservative_variables(&pr, &gr_cons_j_pred, W, &(CellP[j].gr));
+        gr_Sj_check = log(pr.u) + (1.0 - GAMMA_DEFAULT)*log(pr.rho0); gr_uj_tmp = pr.u;
+        gr_cons_j_pred.D = (gr_cons_j_pred.D*gr_Vj + gr_cons_i.D*gr_Vi)/gr_Vtot;
+        gr_cons_j_pred.tau = (gr_cons_j_pred.tau*gr_Vj + gr_cons_i.tau*gr_Vi)/gr_Vtot;
+        gr_cons_j_pred.S = (gr_Vj*gr_cons_j_pred.S + gr_Vi*gr_cons_i.S)/gr_Vtot;
+        /* kicked states */
+        W = gr_primitives_of_cell(i, P[i].Vel, P[i].Mass, gr_Vi, CellP[i].InternalEnergy, BVi, &pr, P, CellP);
+        gr_get_conservative_variables(&pr, &gr_cons_i, W, &(CellP[i].gr));
+        W = gr_primitives_of_cell(j, P[j].Vel, P[j].Mass, gr_Vj, CellP[j].InternalEnergy, BVj, &pr, P, CellP);
+        gr_get_conservative_variables(&pr, &gr_cons_j, W, &(CellP[j].gr));
+        gr_cons_j.D = (gr_cons_j.D*gr_Vj + gr_cons_i.D*gr_Vi)/gr_Vtot;
+        gr_cons_j.tau = (gr_cons_j.tau*gr_Vj + gr_cons_i.tau*gr_Vi)/gr_Vtot;
+        gr_cons_j.S = (gr_Vj*gr_cons_j.S + gr_Vi*gr_cons_i.S)/gr_Vtot;
+    }
+#endif
     double dm_i=0,dm_j=0,de_i=0,de_j=0,dm_ij,de_ij;
     Vec3<double> dp_i{}, dp_j{}, dp_ij{};
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
@@ -1163,6 +1207,9 @@ int merge_particles_ij(int i, int j)
 #ifdef PMGRID
     P[j].GravPM = P[j].GravPM * wt_j + P[i].GravPM * wt_i; // force-conserving //
 #endif
+#ifdef GENERAL_RELATIVITY
+    set_metric_coefficients(pos_new, wt_i*P[i].Potential + wt_j*P[j].Potential, &(CellP[j].gr)); /* the metric at the merged position */
+#endif
 #ifdef MAGNETIC
     // we evolve the conservative variables VB and Vpsi, these should simply add in particle-merge operations //
     { Vec3<double> B_before_split = (CellP[i].B + CellP[j].B) * (1.0 / (volume_before_merger_i + volume_before_merger_j)); /* calculate the real value of B pre-split to know what we need to correctly re-initialize to once the volume partition can be recomputed. here since VB is the conserved variable explicitly integrated, that gets added with the pre-summation volumes (so we take a volume-weighted mean here) */
@@ -1181,6 +1228,33 @@ int merge_particles_ij(int i, int j)
 #endif
 #endif
 
+#ifdef GENERAL_RELATIVITY
+    {
+        /* the primitives of the merged cell from the merged conserved variables (predicted, then kicked) */
+        struct gr_primitives pr;
+        double res_con2prim = gr_get_primitive_variables(&gr_cons_j_pred, &pr, &(CellP[j].gr), CellP[j].gr.limiter);
+        if(res_con2prim < 0) {printf("Warning: failed inversion with code %g in merge/split\n", res_con2prim); endrun(2488);}
+        CellP[j].VelPred = Vcoord(pr.v, &(CellP[j].gr));
+        CellP[j].InternalEnergyPred = pr.u;
+        double Schild = log(pr.u) + (1.0 - GAMMA_DEFAULT)*log(pr.rho0);
+        res_con2prim = gr_get_primitive_variables(&gr_cons_j, &pr, &(CellP[j].gr), CellP[j].gr.limiter);
+        if(res_con2prim < 0) {printf("Warning: failed inversion with code %g in merge/split\n", res_con2prim); endrun(2488);}
+        P[j].Vel = Vcoord(pr.v, &(CellP[j].gr));
+        CellP[j].InternalEnergy = pr.u;
+        /* the rates are recomputed by the next kick/predict */
+        CellP[j].HydroAccel = {}; CellP[j].DtInternalEnergy = 0;
+        /* no artificial entropy increase */
+        if(Schild > DMAX(gr_Si_check, gr_Sj_check))
+        {
+            CellP[j].InternalEnergyPred = (gr_Si_check > gr_Sj_check) ? gr_ui_tmp : gr_uj_tmp;
+            CellP[j].InternalEnergy = CellP[j].InternalEnergyPred;
+        }
+#ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
+        CellP[j].Temperature = T_mixed_for_anchor; CellP[j].u_anchor = CellP[j].InternalEnergyPred;
+#endif
+        (void) egy_old; (void) egy_old_pred; (void) de_ij; (void) dp_ij; (void) dm_ij;
+    }
+#else
     /* correct our 'guess' for the internal energy with the residual from exact energy conservation.
        The merge sets the new velocity momentum-conservingly, so the pair's COM-frame kinetic energy
        (1/2)*mu*|dv|^2 leaves the kinetic budget; returning it here as heat is what makes the operation
@@ -1209,9 +1283,14 @@ int merge_particles_ij(int i, int j)
     de_ij -= dm_ij * CellP[j].InternalEnergyPred;
     CellP[j].HydroAccel = (dp_ij - CellP[j].VelPred * (dm_ij / All.cf_atime)) * (1.0 / mtot);
     de_ij -= mtot * dot(CellP[j].VelPred, CellP[j].HydroAccel) / All.cf_atime + 0.5 * dm_ij * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
-    CellP[j].DtInternalEnergy = de_ij;
+    CellP[j].DtInternalEnergy = de_ij / mtot; /* de_ij is the total (thermal) energy rate of the merged cell: convert to the specific rate the kick expects, consistently with HydroAccel above (P[j].Mass is still the pre-merger mass here) */
+#endif /* GENERAL_RELATIVITY */
     // to be conservative adopt the maximum signal velocity and kernel length //
+#ifdef GENERAL_RELATIVITY
+    CellP[j].MaxSignalVel = (CellP[j].MaxSignalVel + CellP[i].MaxSignalVel)/(1 + 0.25*CellP[j].MaxSignalVel*CellP[i].MaxSignalVel); /* relativistic composition of the two signal speeds */
+#else
     CellP[j].MaxSignalVel = sqrt(CellP[j].MaxSignalVel*CellP[j].MaxSignalVel + CellP[i].MaxSignalVel*CellP[i].MaxSignalVel); /* need to be conservative */
+#endif
     P[j].KernelRadius = pow(pow(P[j].KernelRadius,NUMDIMS)+pow(P[i].KernelRadius,NUMDIMS),1.0/NUMDIMS); /* sum the volume of the two particles */
     gizmo_mark_kernel_radius_dirty_indices(&j, 1); /* survivor h changed: mark h-dirty across all caches */
     CellP[j].ConditionNumber = CellP[j].ConditionNumber + CellP[i].ConditionNumber; /* sum to be conservative */

@@ -61,6 +61,18 @@ void compute_global_quantities_of_system(void)
         vel += P[i].GravPM * dt_gravkick_pm;
 #endif
         
+#ifdef GENERAL_RELATIVITY
+        if(P[i].Type == 0)
+        {
+            /* GR: m (h W v)^2 as the kinetic-energy diagnostic, as in the original GR code */
+            const struct gr_metric *gr = &(CellP[i].gr);
+            double h = 1 + CellP[i].InternalEnergy + CellP[i].Pressure/gr_get_primitive_density(CellP[i].Density, P[i].Vel, gr, gr->limiter);
+            Vec3<double> vphys = Vphys(P[i].Vel, gr);
+            double W = lorentz_factor(gr->gamma, vphys, gr->limiter);
+            sys.EnergyKinComp[P[i].Type] += P[i].Mass * gr->gamma.quad((h*W)*vphys);
+        }
+        else
+#endif
         sys.EnergyKinComp[P[i].Type] += 0.5 * P[i].Mass * vel.norm_sq() / a2;
         if(P[i].Type == 0) {egyspec = entr; sys.EnergyIntComp[0] += P[i].Mass * egyspec;}
         

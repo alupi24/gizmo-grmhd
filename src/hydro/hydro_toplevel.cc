@@ -139,11 +139,17 @@ void hydro_final_operations_and_cleanup(void)
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             /* signal velocity needs to include rate of gas flow -over- the resolution element, which can be non-zero here */
+#ifdef GENERAL_RELATIVITY
+            CellP[i].MaxSignalVel *= CellP[i].gr.alpha; /* GR: convert to dx/dt (accounting for the lapse) */
+#endif
             double v2_p = CellP[i].MaxSignalVel*CellP[i].MaxSignalVel + (CellP[i].VelPred - CellP[i].ParticleVel).norm_sq();
             CellP[i].MaxSignalVel = sqrt(v2_p);
+#ifdef GENERAL_RELATIVITY
+            CellP[i].MaxSignalVel /= CellP[i].gr.alpha; /* and back to v */
+#endif
 #endif
 
-#if defined(MAGNETIC)
+#ifdef MAGNETIC
             /* need to subtract out the source terms proportional to the (non-zero) B-field divergence; to stabilize the scheme */
             {
                 Vec3<double> Bi = CellP[i].Bfield() * All.cf_a2inv;
@@ -203,6 +209,11 @@ void hydro_final_operations_and_cleanup(void)
 #endif // MAGNETIC
 
 
+#ifdef GENERAL_RELATIVITY
+            /* GR: keep the rates of the conserved variables for the kick (the conversion to primitives is done in the GR kick/predict) */
+            CellP[i].DtMomentum = CellP[i].HydroAccel;
+            CellP[i].DtEnergy = CellP[i].DtInternalEnergy;
+#else
             /* we calculated the flux of conserved variables: these are used in the kick operation. But for
              intermediate drift operations, we need the primive variables, so reduce to those here
              (remembering that v_phys = v_code/All.cf_atime, for the sake of doing the unit conversions to physical) */
@@ -225,6 +236,7 @@ void hydro_final_operations_and_cleanup(void)
 #endif
             CellP[i].DtInternalEnergy /= P[i].Mass;
             /* ok, now: HydroAccel = dv/dt, DtInternalEnergy = du/dt (energy per unit mass) */
+#endif // GENERAL_RELATIVITY
 
             /* zero out hydrodynamic PdV work terms if the particle is at the maximum smoothing, these will be incorrect */
             if(P[i].KernelRadius >= 0.99*All.MaxKernelRadius) {CellP[i].DtInternalEnergy = 0;}
@@ -394,6 +406,9 @@ void hydro_final_operations_and_cleanup(void)
 #endif
                 CellP[i].DtInternalEnergy = 0;//CellP[i].dInternalEnergy = 0;//manifest-indiv-timestep-debug//
                 CellP[i].HydroAccel = {};
+#ifdef GENERAL_RELATIVITY
+                CellP[i].DtEnergy = 0; CellP[i].DtMomentum = {};
+#endif
 #ifdef MAGNETIC
                 CellP[i].DtB = {};
 #ifdef DIVBCLEANING_DEDNER
@@ -457,6 +472,9 @@ void hydro_force_initial_operations_preloop(void)
             CellP[i].HydroAccel = {};
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             CellP[i].DtMass = 0; CellP[i].dMass = 0; CellP[i].GravWorkTerm = {};
+#endif
+#ifdef GENERAL_RELATIVITY
+            CellP[i].DtVolume = 0; CellP[i].DtMomentum = {}; CellP[i].DtEnergy = 0;
 #endif
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
             for(k=0;k<NUM_METAL_SPECIES;k++) {CellP[i].Dyield[k] = 0;}

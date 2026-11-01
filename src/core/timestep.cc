@@ -124,6 +124,7 @@ void find_timesteps(void)
 #endif
 
 
+
     /* Now assign new timesteps  */
     for (int i : ActiveParticleList)
     {
@@ -434,6 +435,9 @@ integertime get_timestep(int p,		/*!< particle index */
     if(CBE_INTEGRATOR_DOES_TYPE(P[p].Type)) {h_for_accel_dt = KERNEL_CORE_SIZE * Get_Particle_Size_AGS(p);} /* AGS particle size, not force-softening, like gas */
 #endif
     if(h_for_accel_dt <= 0) {h_for_accel_dt = P[p].Get_Particle_Size() * All.cf_atime;} /* a particle without a force softening (e.g. grains without gravity, or an element whose type changed this step before its softening was refreshed) uses the inter-particle spacing as the characteristic length scale */
+#if defined(GENERAL_RELATIVITY) && defined(GR_TIMESTEP_FIXED_SOFTENING)
+    if(P[p].Type == 0) {h_for_accel_dt = KERNEL_CORE_SIZE * All.ForceSoftening[0];} /* as in the original GR code: the fixed gas softening (SofteningGas), not the kernel radius used under SELFGRAVITY_OFF */
+#endif
     dt = sqrt(2 * All.ErrTolIntAccuracy * All.cf_atime * h_for_accel_dt / ac);}
 
 #if (defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)) && defined(GALSF) && defined(GALSF_FB_MECHANICAL)
@@ -650,11 +654,42 @@ integertime get_timestep(int p,		/*!< particle index */
         {
             csnd = 0.5 * CellP[p].MaxSignalVel ;
             double L_particle = P[p].Get_Particle_Size();
+            /* GR: MaxSignalVel is measured by the Eulerian observer, L is a coordinate length and dt a coordinate time. A consistent
+               coordinate form would allow a step larger by sqrt(gamma_nn)/alpha (x2 at the Kerr-Schild horizon); that was too large near
+               the horizon (Bondi failed), so this mixed form is kept on purpose as a safety margin in strongly curved regions. */
             dt_courant = All.CourantFac * (L_particle*All.cf_atime) / csnd;
 #if defined(SINK_WIND_SPAWN) && !defined(SINK_RIAF_SUBEDDINGTON_MODEL)
             if(P[p].ID == All.SpawnedWindCellID) {dt_courant *= 0.5;} // be more careful if this is a spawned-in gas cell
 #endif
             if(dt_courant < dt) dt = dt_courant;
+#ifdef GENERAL_RELATIVITY
+            {
+                /* (the original code also limited the change of the conserved energy tau per step to 10% of tau: removed, since with the two limits
+                   below it binds only in a handful of cell-steps in the rotor, the cylindrical blast, Balsara 4 and the magnetised Bondi flow,
+                   and none of them changes without it) */
+                const struct gr_metric *gr = &(CellP[p].gr);
+                Vec3<double> vphys = Vphys(P[p].Vel, gr);
+                double rho = gr_get_primitive_density(CellP[p].Density, P[p].Vel, gr, gr->limiter);
+                double hstar = 1.0 + CellP[p].InternalEnergy + CellP[p].Pressure/rho, Vi = P[p].Mass/CellP[p].Density;
+                double Wl = lorentz_factor(gr->gamma, vphys, gr->limiter);
+                /* (not in the original code) where the internal energy is a small part of the energy of the cell (magnetically dominated gas, fast
+                   flows), the inversion amplifies the error of the conserved variables in u by ~ tau/(rho0 u): the conserved update of the first-order
+                   sub-steps (the half-kicks and the drift prediction) then drains u until no positive u exists for the given D, S_j, B (tau < tau_min).
+                   Two limits bound that error; without them the kernel-radius acceleration criterion (SELFGRAVITY_OFF) lets the relativistic rotor,
+                   the cylindrical blast and Balsara 4 fail or overheat. */
+                /* (2) energy consistency of the first-order sub-steps: the conserved variables are advanced linearly, so the kinetic energy recovered
+                   from S + dS exceeds the work v.dS by ~ (1/2) rho0 h* W^3 dv^2 (W^3 along v), which the inversion takes from the internal energy;
+                   with dv = |a| dt (a = the coordinate dv/dt of the last kick) this is at most GR_TIMESTEP_ENERGY_FRAC of rho0 u. h* includes the
+                   magnetic enthalpy b^2/rho0, so the limit tightens as ~1/sqrt(sigma) in magnetically dominated gas (acceleration from rest).
+                   Not applied where the inversion of a kick found no admissible u (tau < tau_min) and kept the previous one (gr_kick_impl): that u carries
+                   no information, and a limit ~ sqrt(u) would shrink the step without bound while a drain of u (Lorentz-force work at sigma >> 1) goes on.
+                   Not applied to test particles (GR_TEST_PARTICLE: geodesics, no hydro; their u is a placeholder) */
+#ifndef GR_TEST_PARTICLE
+                if((ac > MIN_REAL_NUMBER) && (CellP[p].InternalEnergy > 0) && (CellP[p].InversionKeptU == 0))
+                    {dt = DMIN(dt, sqrt(2.*GR_TIMESTEP_ENERGY_FRAC*CellP[p].InternalEnergy/(hstar*Wl*Wl*Wl))/ac);}
+#endif
+            }
+#endif
 
 #ifdef MHD_BATTERY_MECHANISMS
             /* The battery builds a field out of nothing, at a rate set by the thermodynamic

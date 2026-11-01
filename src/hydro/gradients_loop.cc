@@ -83,7 +83,17 @@ void local_slopelimiter(double *grad, double valmax, double valmin, double alim,
         if(abs_max < abs_min) { abs_max = fabs_min; abs_min = fabs_max; }
         f_corr_overshoot = DMIN(abs_min + shoot_tol * abs_max, abs_max);
         cfac *= f_corr_overshoot;
-        if(pos_preserve == 1) {
+        if(pos_preserve >= 1) {
+            /* positivity over a fraction of the maximum neighbour distance d_max: SLOPELIMITER_POSITIVITY_RANGE_FAC (default 0.25; 0.5 in GR, as in the
+               original GR code: at 0.25 the poorly resolved surface of a low-resolution TOV star launches a noise front that crosses the star in
+               ~7 t_dyn, while at 0.5 the star stays quiet and only its surface expands slowly).
+               fmin is at most half the smallest neighbour value (valmin is a difference from val_cen). Over the full d_max the pressure
+               step over-limits smooth stratified profiles: a TOV star or a Newtonian polytrope then develops an inward density wave
+               (outer layers drain, the core contracts); at 0.5 the wave is only slowed (TOV: outer shell at 0.7 of its initial density
+               after t=20), at 0.25 smooth profiles are left alone. The GR densities also need 0.5, where faces lie at the farthest
+               neighbour's midpoint: with 0.25 for the densities the gas pressure of the relativistic magnetic rotor collapses in its dense,
+               magnetically dominated shell (t~0.22). The pairwise face limiter of reconstruct_face_states keeps the face states positive. */
+            d_max *= SLOPELIMITER_POSITIVITY_RANGE_FAC;
             double fmin = DMIN(val_cen, DMAX(0, DMAX(MIN_REAL_NUMBER * val_cen,
                                                     DMIN(0.5 * (val_cen + valmin),
                                                          val_cen - f_corr_overshoot))));
@@ -225,8 +235,15 @@ void GradientsSpec::apply_active_writeback(const neighbor_loop_args& args,
         MIN_ADD(passer[i].Minima.Density,  out->Minima.Density,  0);
         MAX_ADD(passer[i].Maxima.Pressure, out->Maxima.Pressure, 0);
         MIN_ADD(passer[i].Minima.Pressure, out->Minima.Pressure, 0);
+#ifdef GENERAL_RELATIVITY
+        MAX_ADD(passer[i].Maxima.RestMassDensity, out->Maxima.RestMassDensity, 0);
+        MIN_ADD(passer[i].Minima.RestMassDensity, out->Minima.RestMassDensity, 0);
+#endif
         for(k = 0; k < 3; k++) {
             ASSIGN_ADD_PRESET(CellP[i].Gradients.Density[k],  out->Gradients[k].Density,  0);
+#ifdef GENERAL_RELATIVITY
+            ASSIGN_ADD_PRESET(CellP[i].Gradients.RestMassDensity[k], out->Gradients[k].RestMassDensity, 0);
+#endif
             ASSIGN_ADD_PRESET(CellP[i].Gradients.Pressure[k], out->Gradients[k].Pressure, 0);
         }
 #ifdef DOGRAD_INTERNAL_ENERGY
@@ -489,6 +506,9 @@ void hydro_gradient_calc(void)
         CellP[i].Gradients.Density  = {};
         CellP[i].Gradients.Pressure = {};
         CellP[i].Gradients.Velocity = {};
+#ifdef GENERAL_RELATIVITY
+        CellP[i].Gradients.RestMassDensity = {};
+#endif
 #ifdef DOGRAD_INTERNAL_ENERGY
         CellP[i].Gradients.InternalEnergy = {};
 #endif
@@ -775,6 +795,9 @@ void hydro_gradient_calc(void)
         if(P[i].Type != 0) continue;
         int k, k1;
         construct_gradient(CellP[i].Gradients.Density, i);
+#ifdef GENERAL_RELATIVITY
+        construct_gradient(CellP[i].Gradients.RestMassDensity, i);
+#endif
         construct_gradient(CellP[i].Gradients.Pressure, i);
         for(k = 0; k < 3; k++) { construct_gradient(CellP[i].Gradients.Velocity[k], i); }
 #ifdef TURB_DIFF_DYNAMIC
@@ -835,6 +858,7 @@ void hydro_gradient_calc(void)
                                         0.1 * All.ArtMagDispConst), 0.005);
         }
 #endif
+
 
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || (ADAPTIVE_GRAVSOFT_FORALL & 1)
         {
@@ -987,13 +1011,32 @@ void hydro_gradient_calc(void)
 #if (SLOPE_LIMITER_TOLERANCE == 0)
             a_limiter *= 2.0; stol = 0.0;
 #endif
+#if defined(GENERAL_RELATIVITY) && (SLOPE_LIMITER_TOLERANCE == 1)
+            /* GR: the cell limiter of SLOPE_LIMITER_TOLERANCE=0 (twice as strict), with the default face tolerances. In the relativistic
+               cylindrical blast the default 0.25 lets the extrapolation of the magnetically dominated cells at the shell corners drain their
+               thermal energy (MFM: the run fails at t~0.9 unless the drained states are repaired with an energy injection; MFV: u falls to
+               ~1e-4 of its value at sigma ~ 200 and the energy time-step limit takes the step to ~1e-6); at 0.5 the drain is transient
+               (MFM: t~1.05-1.7, the inversion keeps the previous u; the run reaches t=4 with the paper's low-pressure lobes) or absent (MFV, to t=1.1).
+               The TOV star, the magnetic rotor, Balsara 4 and the magnetised Bondi flow are unchanged or slightly better with MFM. With MFV the
+               stricter limiter lets the mass fluxes carry mass out of the core of a TOV star, a resolution effect that converges away
+               (rho_c after 5 t_dyn: 0.92, 0.985 and 1.000 with 4e3, 3.1e4 and 2.5e5 particles on an FCC lattice). */
+            a_limiter *= 2.0;
+#endif
 
 #if (SINGLE_STAR_SINK_FORMATION & 4)
             CellP[i].Density_Relative_Maximum_in_Kernel = passer_base[i].Maxima.Density;
 #endif
+#ifdef GENERAL_RELATIVITY
+            local_slopelimiter(CellP[i].Gradients.RestMassDensity, passer_base[i].Maxima.RestMassDensity, passer_base[i].Minima.RestMassDensity,
+                               a_limiter, h_lim, 0., 1, d_max, gr_get_primitive_density(CellP[i].Density, CellP[i].VelPred, &(CellP[i].gr), CellP[i].gr.limiter));
             local_slopelimiter(CellP[i].Gradients.Density, passer_base[i].Maxima.Density, passer_base[i].Minima.Density,
                                a_limiter, h_lim, 0, 1, d_max, CellP[i].Density);
             int pressure_is_positive_definite = 1;
+#else
+            local_slopelimiter(CellP[i].Gradients.Density, passer_base[i].Maxima.Density, passer_base[i].Minima.Density,
+                               a_limiter, h_lim, 0, 1, d_max, CellP[i].Density);
+            int pressure_is_positive_definite = 1;
+#endif
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
             pressure_is_positive_definite = 0;
 #endif

@@ -245,6 +245,22 @@ struct HydroForceSpec
         /* Dead-row gate (see HydroForceActiveData::enabled): also guards the
          * Mass/Density divisions below against a mid-corridor-killed cell. */
         active.enabled          = (kp[i].Mass > 0 && kc[i].Density > 0);
+#ifdef GENERAL_RELATIVITY
+        {
+            /* GR: Vel carries the Eulerian velocity v = (dx/dt + beta)/alpha, FourVelocity = W*v, VelCoord the coordinate velocity of the mesh-generating point */
+            const struct gr_metric *gri = &(kc[i].gr);
+            local.Vel = Vphys(kc[i].VelPred, gri);
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+            local.ParticleVel = Vphys(kc[i].ParticleVel, gri);
+            local.VelCoord = kc[i].ParticleVel;
+#else
+            local.VelCoord = kc[i].VelPred;
+#endif
+            double Wlorentz = lorentz_factor(gri->gamma, local.Vel, gri->limiter); /* (limits Vel in place where required) */
+            local.FourVelocity = Wlorentz*local.Vel;
+            local.RestMassDensity = active.enabled ? gr_get_primitive_density(kc[i].Density, kc[i].VelPred, gri, gri->limiter) : 0;
+        }
+#endif
         local.Pressure          = kc[i].Pressure;
         local.ConditionNumber   = kc[i].ConditionNumber;
 #ifdef MHD_CONSTRAINED_GRADIENT
@@ -258,6 +274,9 @@ struct HydroForceSpec
         local.Gradients.Density   = kc[i].Gradients.Density;
         local.Gradients.Pressure  = kc[i].Gradients.Pressure;
         local.Gradients.Velocity  = kc[i].Gradients.Velocity;
+#ifdef GENERAL_RELATIVITY
+        local.Gradients.RestMassDensity = kc[i].Gradients.RestMassDensity;
+#endif
         local.NV_T                = kc[i].NV_T;
         local.TimeBin             = kp[i].TimeBin;
 #ifdef MAGNETIC
@@ -507,6 +526,9 @@ struct HydroForceSpec
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
         MERGE_MAX(MaxKineticEnergyNgb);
 #endif
+#ifdef GENERAL_RELATIVITY
+        MERGE_ADD(DtVolume);
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         MERGE_ADD(DtMass);
         MERGE_ADD(dMass);
@@ -538,7 +560,7 @@ struct HydroForceSpec
         for(int kv = 0; kv < 3; kv++) { dst.Face_Area[kv] += src.Face_Area[kv]; }
         for(int kv = 0; kv < 3; kv++) { dst.DtB[kv] += src.DtB[kv]; }
         MERGE_ADD(divB);
-#if defined(DIVBCLEANING_DEDNER)
+#ifdef DIVBCLEANING_DEDNER
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         MERGE_ADD(DtPhi);
 #endif

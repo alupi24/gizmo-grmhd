@@ -549,6 +549,7 @@ void init(void)
     All.PM_Ti_endstep = All.PM_Ti_begstep = 0;
 #endif
 
+
     for(i = 0; i < N_gas; i++)	/* initialize gas/fluid cell properties */
     {
         CellP[i].InternalEnergyPred = CellP[i].InternalEnergy;
@@ -559,6 +560,10 @@ void init(void)
         CellP[i].ConditionNumber = 1;
         CellP[i].DtInternalEnergy = 0;
         CellP[i].FaceClosureError = 0;
+#ifdef GENERAL_RELATIVITY
+        set_metric_coefficients(P[i].Pos, P[i].Potential, &(CellP[i].gr));
+        CellP[i].DtMomentum = {}; CellP[i].DtEnergy = 0; CellP[i].DtVolume = 0; CellP[i].InversionKeptU = 0;
+#endif
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
         CellP[i].MaxKineticEnergyNgb = 0;
 #endif
@@ -863,6 +868,10 @@ void init(void)
     if(RestartFlag==0) {for(i = 0; i < NumPart; i++) {P[i].ID_child_number = 0; P[i].ID_generation = 0;}}
 #ifdef NO_CHILD_IDS_IN_ICS
     if(RestartFlag != 1) {for(i = 0; i < NumPart; i++) {P[i].ID_child_number = 0; P[i].ID_generation = 0;}}
+#endif
+
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC>0)
+    for(i = 0; i < N_gas; i++) {if(P[i].Type == 0) {check_boundary(i);}} /* excise the cells inside the horizon (apply_excision does it every step) */
 #endif
 
 #ifdef TEST_FOR_IDUNIQUENESS

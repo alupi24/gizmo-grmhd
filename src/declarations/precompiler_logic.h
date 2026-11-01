@@ -24,6 +24,41 @@
 #endif
 #endif
 
+/* ----- general relativity (gr/gr.h): Lupi 2023 (GR hydro). The metric is prescribed (no self-gravity) ----- */
+#ifdef GENERAL_RELATIVITY
+#ifdef MAGNETIC
+#error "GENERAL_RELATIVITY is hydrodynamics only in this version: GR MHD is not available"
+#endif
+#if defined(HYDRO_DENSITY_SPH) || defined(HYDRO_PRESSURE_SPH)
+#error "GENERAL_RELATIVITY does not work with the SPH solvers"
+#endif
+#if (GENERAL_RELATIVITY==2)
+#error "GENERAL_RELATIVITY=2 (HLLC solver) is not ported to the Kokkos code: use 0 (HLL) or 1 (GForce)"
+#endif
+#ifndef GR_METRIC
+#define GR_METRIC (1)                 /* default: Kerr (Schwarzschild for GR_Spin=0) */
+#endif
+#ifndef SELFGRAVITY_OFF
+#define SELFGRAVITY_OFF               /* the metric is prescribed: no Newtonian self-gravity */
+#endif
+#if (GR_METRIC==1)
+#ifndef USE_BOYERLINDQUIST
+#define USE_KERRSCHILD_COORDINATES    /* Kerr-Schild coordinates by default for a single black hole */
+#endif
+#endif
+#if (GR_METRIC>0)
+#ifndef SINK_CALC_DISTANCES
+#define SINK_CALC_DISTANCES
+#endif
+#ifndef PARTICLE_EXCISION
+#define PARTICLE_EXCISION             /* the cells inside GR_EXCISION_RADIUS horizon radii are removed */
+#endif
+#ifndef GR_EXCISION_RADIUS
+#define GR_EXCISION_RADIUS (2.1)      /* in units of the horizon radius */
+#endif
+#endif
+#endif
+
 /* define the default mesh-motion assumption, if this is not provided by the user */
 #if !defined(HYDRO_FIX_MESH_MOTION)
 #if defined(HYDRO_REGULAR_GRID)
@@ -1281,10 +1316,21 @@
 #endif
 #endif
 
+#if defined(GENERAL_RELATIVITY) && !defined(GR_DRIFT_LEGACY) && !defined(GR_DRIFT_HOLD_INTERNAL_ENERGY)
+#define GR_DRIFT_HOLD_INTERNAL_ENERGY /* GR: the drift holds D, S_j, sqrt(gamma)B^i and u fixed and recomputes W and tau at the new metric (default); GR_DRIFT_LEGACY restores the drift of Lupi (2023) */
+#endif
+
 #ifdef MAGNETIC /* recommended MHD switches -- only turn these off for de-bugging */
 #define DIVBCLEANING_DEDNER         /* hyperbolic/parabolic div-cleaing (Dedner 2002), with TP improvements */
 #ifdef HYDRO_SPH /* MHD switches specific to SPH MHD */
 #define SPH_TP12_ARTIFICIAL_RESISTIVITY   /* turns on magnetic dissipation ('artificial resistivity'): uses tricco switch =h*|gradB|/|B| */
+#endif
+#else
+/* the divergence-cleaning flags only make sense with MAGNETIC (they are set automatically above): if a Config lists one of them
+   without MAGNETIC, ignore it here, since several files test only the cleaning flags while the fields they need are declared inside
+   the MAGNETIC blocks */
+#ifdef DIVBCLEANING_DEDNER
+#undef DIVBCLEANING_DEDNER
 #endif
 #endif
 
@@ -1794,3 +1840,4 @@
 #endif
 #define EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
 #endif
+

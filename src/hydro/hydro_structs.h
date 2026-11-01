@@ -72,6 +72,13 @@ struct hydro_data_in
     MyFloat KernelRadius;
     MyFloat Mass;
     MyFloat Density;
+#ifdef GENERAL_RELATIVITY
+    /* GR: Vel carries the Eulerian velocity v = (dx/dt + beta)/alpha (and ParticleVel the Eulerian velocity of the mesh-generating point);
+       VelCoord is the coordinate velocity dx/dt of the mesh-generating point (face velocities), FourVelocity = W*v is what is reconstructed */
+    MyFloat RestMassDensity;
+    Vec3<MyFloat> FourVelocity;
+    Vec3<MyFloat> VelCoord;
+#endif
     MyFloat Pressure;
     MyFloat ConditionNumber;
     MyFloat FaceClosureError;
@@ -90,6 +97,9 @@ struct hydro_data_in
         Vec3<MyDouble> Density;
         Vec3<MyDouble> Pressure;
         Mat3<MyDouble> Velocity;
+#ifdef GENERAL_RELATIVITY
+        Vec3<MyDouble> RestMassDensity;
+#endif
 #ifdef MAGNETIC
         Mat3<MyDouble> B;
 #ifdef DIVBCLEANING_DEDNER
@@ -230,6 +240,9 @@ struct hydro_data_out
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
     MyFloat MaxKineticEnergyNgb;
 #endif
+#ifdef GENERAL_RELATIVITY
+    MyDouble DtVolume;              /*!< rate of change of the volume from the Riemann problems (used by the GR kick/predict) */
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     MyDouble DtMass;
     MyDouble dMass;
@@ -263,7 +276,7 @@ struct hydro_data_out
     Vec3<MyDouble> Face_Area;
     Vec3<MyFloat> DtB;
     MyFloat divB;
-#if defined(DIVBCLEANING_DEDNER)
+#ifdef DIVBCLEANING_DEDNER
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
     MyFloat DtPhi;
 #endif
